@@ -6,6 +6,7 @@ ifneq (,$(filter userdebug eng, $(TARGET_BUILD_VARIANT)))
 CONFIG_CCI_DEBUG_INTF := y
 ccflags-y += -DCONFIG_CCI_DEBUG_INTF=1
 endif
+CONFIG_CAM_SENSOR_PROBE_DEBUG := y
 
 CONFIG_CAM_SENSOR_PROBE_DEBUG := y
 
