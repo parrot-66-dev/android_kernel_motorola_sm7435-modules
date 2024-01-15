@@ -16,3 +16,5 @@ ccflags-y += -DCONFIG_MOT_PROBE_SUB_DEVICE=1
 
 
 # Flags to pass into C preprocessor
+CONFIG_MOT_OIS_DW9784_ACTIVE_OIS := y
+ccflags-y += -DCONFIG_MOT_OIS_DW9784_ACTIVE_OIS=1
