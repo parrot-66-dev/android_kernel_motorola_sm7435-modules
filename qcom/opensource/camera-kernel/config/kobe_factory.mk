@@ -4,6 +4,7 @@
 # Camera: Remove for user build
 ifneq (,$(filter userdebug eng, $(TARGET_BUILD_VARIANT)))
 CONFIG_CCI_DEBUG_INTF := y
+CONFIG_MOT_SENSOR_PRE_POWERUP := y
 ccflags-y += -DCONFIG_CCI_DEBUG_INTF=1
 endif
 
@@ -19,3 +20,4 @@ ccflags-y += -DCONFIG_MOT_PROBE_SUB_DEVICE=1
 CONFIG_MOT_OIS_DW9784_ACTIVE_OIS := y
 ccflags-y += -DCONFIG_MOT_OIS_DW9784_ACTIVE_OIS=1
 ccflags-y += -DCONFIG_MOT_OIS_AFTER_SALES_SERVICE=1
+ccflags-y += -DCONFIG_MOT_SENSOR_PRE_POWERUP=1
