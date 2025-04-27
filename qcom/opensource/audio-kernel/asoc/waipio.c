@@ -1090,6 +1090,29 @@ static struct snd_soc_dai_link msm_mi2s_dai_links[] = {
 		SND_SOC_DAILINK_REG(quat_mi2s_tx),
 	},
 #ifdef CONFIG_SND_SOC_AW882XX
+#ifdef CONFIG_PORTOV_DTB
+	{
+		.name = LPASS_BE_QUIN_MI2S_RX,
+		.stream_name = LPASS_BE_QUIN_MI2S_RX,
+		.playback_only = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.ops = &msm_common_be_ops,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		SND_SOC_DAILINK_REG(quin_mi2s_rx),
+	},
+	{
+		.name = LPASS_BE_QUIN_MI2S_TX,
+		.stream_name = LPASS_BE_QUIN_MI2S_TX,
+		.capture_only = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.ops = &msm_common_be_ops,
+		.ignore_suspend = 1,
+		SND_SOC_DAILINK_REG(quin_mi2s_tx),
+	},
+#else
 	{
 		.name = LPASS_BE_QUIN_MI2S_RX,
 		.stream_name = LPASS_BE_QUIN_MI2S_RX,
@@ -1111,6 +1134,7 @@ static struct snd_soc_dai_link msm_mi2s_dai_links[] = {
 		.ignore_suspend = 1,
 		SND_SOC_DAILINK_REG(quin_mi2s_tx_aw882xx),
 	},
+#endif
 #else
 	{
 		.name = LPASS_BE_QUIN_MI2S_RX,
