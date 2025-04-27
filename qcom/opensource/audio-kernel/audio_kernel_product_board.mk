@@ -34,4 +34,6 @@ PRODUCT_PACKAGES += $(KERNEL_MODULES_OUT)/q6_notifier_dlkm.ko\
 	$(KERNEL_MODULES_OUT)/aw87xxx_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/aw882xx_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/fs19xx_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/fs1815_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/fs1815_mngr_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/hdmi_dlkm.ko

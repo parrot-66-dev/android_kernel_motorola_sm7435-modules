@@ -61,6 +61,10 @@
 #define WCN_CDC_SLIM_TX_CH_MAX 2
 #define WCN_CDC_SLIM_TX_CH_MAX_FM 3
 
+#ifdef CONFIG_PORTOV_DTB
+extern int spkr_amp_dapm_init(struct snd_soc_card *card);
+#endif
+
 /* Number of WSAs */
 #define MONO_SPEAKER    1
 #define STEREO_SPEAKER  2
@@ -1958,6 +1962,19 @@ static int msm_tx_codec_init(struct snd_soc_pcm_runtime *rtd)
 	return msm_common_dai_link_init(rtd);
 }
 
+#ifdef CONFIG_PORTOV_DTB
+static int msm_cdc_audrx_init(struct snd_soc_pcm_runtime *rtd)
+{
+	struct snd_soc_card *card = rtd->card;
+	int ret;
+
+	ret = spkr_amp_dapm_init(card);
+	if (ret)
+		dev_err(card->dev, "Failed to init spkr amp mngr:%d\n", ret);
+
+	return 0;
+}
+#endif
 
 static int msm_rx_tx_codec_init(struct snd_soc_pcm_runtime *rtd)
 {
@@ -2078,6 +2095,9 @@ static int msm_rx_tx_codec_init(struct snd_soc_pcm_runtime *rtd)
 done:
 	codec_reg_done = true;
 	msm_common_dai_link_init(rtd);
+#ifdef CONFIG_PORTOV_DTB
+	msm_cdc_audrx_init(rtd);
+#endif
 
 	return ret;
 }

@@ -512,5 +512,22 @@ audio_modules.register(
         'fsm_q6afe.c',
         'fsm_sysfs.c',
         'fs1958.c',
+# >>>> FS1815 MODULES <<<<
+audio_modules.register(
+    name = "fs1815_dlkm",
+    path = ASOC_CODECS_PATH + "/fs1815",
+    config_option = "CONFIG_SND_SOC_FS181X",
+    srcs = [
+        "frsm-i2ca.c",
+        "frsm-amp-drv.c",
+        "frsm-i2ca-2in1.c",
+    ],
+)
+audio_modules.register(
+    name = "fs1815_mngr_dlkm",
+    path = ASOC_CODECS_PATH + "/fs1815",
+    config_option = "CONFIG_SND_SOC_FS181X",
+    srcs = [
+        "spkr-amp-mngr.c",
     ],
 )
