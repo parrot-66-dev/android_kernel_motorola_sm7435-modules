@@ -229,10 +229,10 @@ static const struct snd_soc_dapm_widget spkr_amp_widgets[] = {
 
 static const struct snd_soc_dapm_route spkr_amp_routes[] = {
 	/* TODO */
-	{SPKR_AMP_W_NAME, NULL, "HPHL"}, /* qcom kona */
-	{SPKR_AMP_W_NAME, NULL, "HPHR"},
+//	{SPKR_AMP_W_NAME, NULL, "HPHL"}, /* qcom kona */
+//	{SPKR_AMP_W_NAME, NULL, "HPHR"},
 	{SPKR_AMP_W_NAME, NULL, "AUX"},
-//	{SPKR_AMP_W_NAME, NULL, "EAR"},
+	{SPKR_AMP_W_NAME, NULL, "EAR"},
 //	{SPKR_AMP_W_NAME, NULL, "Receiver"}, /* mtk mt6539 */
 //	{SPKR_AMP_W_NAME, NULL, "LINEOUT L"},
 //	{SPKR_AMP_W_NAME, NULL, "Headphone L Ext Spk Amp"},
