@@ -61,7 +61,7 @@
 #define WCN_CDC_SLIM_TX_CH_MAX 2
 #define WCN_CDC_SLIM_TX_CH_MAX_FM 3
 
-#ifdef CONFIG_PORTOV_DTB
+#ifdef CONFIG_SND_SOC_FS181X
 extern int spkr_amp_dapm_init(struct snd_soc_card *card);
 #endif
 
@@ -1094,29 +1094,6 @@ static struct snd_soc_dai_link msm_mi2s_dai_links[] = {
 		SND_SOC_DAILINK_REG(quat_mi2s_tx),
 	},
 #ifdef CONFIG_SND_SOC_AW882XX
-#ifdef CONFIG_PORTOV_DTB
-	{
-		.name = LPASS_BE_QUIN_MI2S_RX,
-		.stream_name = LPASS_BE_QUIN_MI2S_RX,
-		.playback_only = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			SND_SOC_DPCM_TRIGGER_POST},
-		.ops = &msm_common_be_ops,
-		.ignore_suspend = 1,
-		.ignore_pmdown_time = 1,
-		SND_SOC_DAILINK_REG(quin_mi2s_rx),
-	},
-	{
-		.name = LPASS_BE_QUIN_MI2S_TX,
-		.stream_name = LPASS_BE_QUIN_MI2S_TX,
-		.capture_only = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			SND_SOC_DPCM_TRIGGER_POST},
-		.ops = &msm_common_be_ops,
-		.ignore_suspend = 1,
-		SND_SOC_DAILINK_REG(quin_mi2s_tx),
-	},
-#else
 	{
 		.name = LPASS_BE_QUIN_MI2S_RX,
 		.stream_name = LPASS_BE_QUIN_MI2S_RX,
@@ -1138,7 +1115,6 @@ static struct snd_soc_dai_link msm_mi2s_dai_links[] = {
 		.ignore_suspend = 1,
 		SND_SOC_DAILINK_REG(quin_mi2s_tx_aw882xx),
 	},
-#endif
 #else
 	{
 		.name = LPASS_BE_QUIN_MI2S_RX,
@@ -1962,7 +1938,7 @@ static int msm_tx_codec_init(struct snd_soc_pcm_runtime *rtd)
 	return msm_common_dai_link_init(rtd);
 }
 
-#ifdef CONFIG_PORTOV_DTB
+#ifdef CONFIG_SND_SOC_FS181X
 static int msm_cdc_audrx_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_card *card = rtd->card;
@@ -2095,7 +2071,7 @@ static int msm_rx_tx_codec_init(struct snd_soc_pcm_runtime *rtd)
 done:
 	codec_reg_done = true;
 	msm_common_dai_link_init(rtd);
-#ifdef CONFIG_PORTOV_DTB
+#ifdef CONFIG_SND_SOC_FS181X
 	msm_cdc_audrx_init(rtd);
 #endif
 
