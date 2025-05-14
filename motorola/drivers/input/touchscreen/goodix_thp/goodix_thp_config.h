@@ -42,5 +42,6 @@ struct goodix_ic_report_rate_config {
 };
 
 int goodix_thp_mmi_get_report_rate(struct goodix_thp_core *core_data);
+int parse_report_rate_config(struct device *dev);
 
 #endif
