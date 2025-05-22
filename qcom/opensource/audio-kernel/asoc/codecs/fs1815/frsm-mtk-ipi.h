@@ -32,7 +32,7 @@ static int frsm_send_adsp_params(struct device *dev, struct frsm_adsp_pkg *pkg)
 	dev_dbg(dev, "send pid:0x%x, size:%d", pkg->param_id, pkg->size);
 	buf_size = pkg->size + sizeof(pkg->param_id);
 	buf = kzalloc(buf_size, GFP_KERNEL);
-	if (buf)
+	if (!buf)
 		return -ENOMEM;
 
 	*buf = pkg->param_id;
@@ -65,7 +65,7 @@ static int frsm_recv_adsp_params(struct device *dev, struct frsm_adsp_pkg *pkg)
 	dev_dbg(dev, "recv pid:0x%x, size:%d", pkg->param_id, pkg->size);
 	buf_size = pkg->size + sizeof(pkg->param_id);
 	buf = kzalloc(buf_size, GFP_KERNEL);
-	if (buf)
+	if (!buf)
 		return -ENOMEM;
 
 	*buf = pkg->param_id;

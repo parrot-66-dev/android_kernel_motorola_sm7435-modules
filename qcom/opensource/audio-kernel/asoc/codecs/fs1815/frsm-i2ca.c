@@ -415,6 +415,9 @@ static int frsm_stub_stat_monitor(struct frsm_dev *frsm_dev)
 {
 	int ret = -ENOTSUPP;
 
+	if (frsm_dev == NULL)
+		return -EINVAL;
+
 	if (!test_bit(EVENT_STREAM_ON, &frsm_dev->state))
 		return 0;
 
