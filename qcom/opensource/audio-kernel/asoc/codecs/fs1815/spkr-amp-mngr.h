@@ -32,6 +32,9 @@ struct spkr_amp_mngr {
 	struct device *dev;
 	int ndev_dts;
 	int ndev_list;
+	int dapm_register;
+	char bypass_flag;
+	char spkr_switch[SPKR_AMP_MAX];
 	char amp_mode[SPKR_AMP_MAX];
 	const char *spk_prefix;
 };

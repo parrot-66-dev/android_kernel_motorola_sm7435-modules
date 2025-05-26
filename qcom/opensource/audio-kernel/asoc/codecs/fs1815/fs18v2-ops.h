@@ -27,6 +27,8 @@
 #define FS18V2_00H_OVDS_MASK		BIT(3)
 #define FS18V2_00H_OTPDS_MASK		BIT(2)
 #define FS18V2_00H_BOVDS_MASK		BIT(0)
+#define FS18V2_03H_UVDL_MASK		BIT(12)
+#define FS18V2_03H_OVDL_MASK		BIT(11)
 #define FS18V2_0EH_INIST_MASK		GENMASK(1, 0)
 #define FS18V2_3FH_LNMODE_SHIFT		15
 #define FS18V2_3FH_LNMODE_MASK		BIT(15)
@@ -207,6 +209,8 @@ static int fs18v2_stat_monitor(struct frsm_dev *frsm_dev)
 		dev_err(frsm_dev->dev, "UV detected\n");
 	if (stat & FS18V2_00H_OVDS_MASK)
 		dev_err(frsm_dev->dev, "OV detected\n");
+	if ((anast & FS18V2_03H_UVDL_MASK) || (anast & FS18V2_03H_OVDL_MASK))
+		dev_err(frsm_dev->dev, "UV/OV detected\n");
 	if (stat & FS18V2_00H_OTPDS_MASK)
 		dev_err(frsm_dev->dev, "OT detected\n");
 	if (stat & FS18V2_00H_BOVDS_MASK)

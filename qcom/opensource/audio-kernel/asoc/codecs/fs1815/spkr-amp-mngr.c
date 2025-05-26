@@ -8,7 +8,7 @@
 #include <linux/list.h>
 #include "spkr-amp-mngr.h"
 
-#define SPKR_AMP_VERSION "v1.0.0"
+#define SPKR_AMP_VERSION "v1.0.2"
 #define SPKR_AMP_W_NAME  "Ext AMP"
 #define SPKR_AMP_PREFIX  "SPK"
 
@@ -140,6 +140,52 @@ static int spkr_amp_switch(int id, bool on)
 	return ret;
 }
 
+static int spkr_amp_switch_get(struct snd_kcontrol *kc,
+		struct snd_ctl_elem_value *uc)
+{
+	char spkr_switch;
+	int id;
+
+	id = spkr_amp_get_devid(kc->id.name);
+	if (id < 0) {
+		pr_err("%s: Invalid id:%d\n", __func__, id);
+		return -EINVAL;
+	}
+
+	mutex_lock(&spkr_amp_mutex);
+	spkr_switch = spkr_amp_mngr.spkr_switch[id];
+	uc->value.integer.value[0] = spkr_switch;
+	mutex_unlock(&spkr_amp_mutex);
+
+	return 0;
+}
+
+static int spkr_amp_switch_put(struct snd_kcontrol *kc,
+		struct snd_ctl_elem_value *uc)
+{
+	char spkr_switch;
+	int id, ret;
+
+	id = spkr_amp_get_devid(kc->id.name);
+	if (id < 0) {
+		pr_err("%s: Invalid id:%d\n", __func__, id);
+		return -EINVAL;
+	}
+
+	mutex_lock(&spkr_amp_mutex);
+	spkr_switch = (char)uc->value.integer.value[0];
+	ret = spkr_amp_switch(id, spkr_switch);
+	mutex_unlock(&spkr_amp_mutex);
+	if (ret) {
+		pr_err("%s: Failed to set switch:%d\n", __func__, ret);
+		return ret;
+	}
+
+	spkr_amp_mngr.spkr_switch[id] = spkr_switch;
+
+	return 0;
+}
+
 static int spkr_amp_mode_get(struct snd_kcontrol *kc,
 		struct snd_ctl_elem_value *uc)
 {
@@ -173,6 +219,11 @@ static int spkr_amp_mode_put(struct snd_kcontrol *kc,
 	}
 
 	mutex_lock(&spkr_amp_mutex);
+	if (spkr_amp_mngr.bypass_flag) {
+		pr_info("%s: bypass first and skip mode switch\n", __func__);
+		mutex_unlock(&spkr_amp_mutex);
+		return 0;
+	}
 	mode = (char)uc->value.integer.value[0];
 	ret = spkr_amp_set_mode(id, mode);
 	mutex_unlock(&spkr_amp_mutex);
@@ -182,6 +233,32 @@ static int spkr_amp_mode_put(struct snd_kcontrol *kc,
 	}
 
 	spkr_amp_mngr.amp_mode[id] = mode;
+
+	return 0;
+}
+
+static int spkr_amp_bypass_get(struct snd_kcontrol *kc,
+		struct snd_ctl_elem_value *uc)
+{
+	char bypass;
+
+	mutex_lock(&spkr_amp_mutex);
+	bypass = spkr_amp_mngr.bypass_flag;
+	uc->value.integer.value[0] = bypass;
+	mutex_unlock(&spkr_amp_mutex);
+
+	return 0;
+}
+
+static int spkr_amp_bypass_put(struct snd_kcontrol *kc,
+		struct snd_ctl_elem_value *uc)
+{
+	char bypass;
+
+	mutex_lock(&spkr_amp_mutex);
+	bypass = (char)uc->value.integer.value[0];
+	spkr_amp_mngr.bypass_flag = bypass;
+	mutex_unlock(&spkr_amp_mutex);
 
 	return 0;
 }
@@ -217,10 +294,21 @@ static int spkr_amp_dapm_event(struct snd_soc_dapm_widget *w,
 	return 0;
 };
 
+static const struct snd_kcontrol_new spkr_amp_kcontrols[] = {
+	SOC_SINGLE_EXT(SPKR_AMP_W_NAME " Switch", SND_SOC_NOPM, 0, 1, 0,
+			spkr_amp_switch_get, spkr_amp_switch_put),
+	SOC_SINGLE_EXT(SPKR_AMP_W_NAME " Mode", SND_SOC_NOPM, 0, 15, 0,
+			spkr_amp_mode_get, spkr_amp_mode_put),
+	SOC_SINGLE_EXT(SPKR_AMP_W_NAME " Bypass", SND_SOC_NOPM, 0, 1, 0,
+			spkr_amp_bypass_get, spkr_amp_bypass_put),
+};
+
 static const struct snd_kcontrol_new spkr_amp_controls[] = {
 	SOC_DAPM_PIN_SWITCH(SPKR_AMP_W_NAME),
 	SOC_SINGLE_EXT(SPKR_AMP_W_NAME " Mode", SND_SOC_NOPM, 0, 15, 0,
 			spkr_amp_mode_get, spkr_amp_mode_put),
+	SOC_SINGLE_EXT(SPKR_AMP_W_NAME " Bypass", SND_SOC_NOPM, 0, 1, 0,
+			spkr_amp_bypass_get, spkr_amp_bypass_put),
 };
 
 static const struct snd_soc_dapm_widget spkr_amp_widgets[] = {
@@ -248,16 +336,34 @@ static int spkr_amp_init_controls(struct snd_soc_card *card, int id)
 	if (card == NULL)
 		return -EINVAL;
 
-	new_kctrl = devm_kzalloc(card->dev,
-			sizeof(spkr_amp_controls), GFP_KERNEL);
-	if (new_kctrl == NULL)
-		return -ENOMEM;
+	if (spkr_amp_mngr.dapm_register) {
+		new_kctrl = devm_kzalloc(card->dev,
+				sizeof(spkr_amp_controls), GFP_KERNEL);
+		if (new_kctrl == NULL)
+			return -ENOMEM;
 
-	memcpy(new_kctrl, spkr_amp_controls, sizeof(spkr_amp_controls));
-	count = ARRAY_SIZE(spkr_amp_controls);
+		memcpy(new_kctrl, spkr_amp_controls,
+				sizeof(spkr_amp_controls));
+		count = ARRAY_SIZE(spkr_amp_controls);
+	} else {
+		new_kctrl = devm_kzalloc(card->dev,
+				sizeof(spkr_amp_kcontrols), GFP_KERNEL);
+		if (new_kctrl == NULL)
+			return -ENOMEM;
+
+		memcpy(new_kctrl, spkr_amp_kcontrols,
+				sizeof(spkr_amp_kcontrols));
+		count = ARRAY_SIZE(spkr_amp_kcontrols);
+	}
+
 	for (i = 0, kc = new_kctrl; i < count; i++, kc++) {
+		if (strnstr(kc->name, SPKR_AMP_W_NAME " Bypass",
+				strlen(kc->name)))
+			continue;
 		spkr_amp_append_spk_prefix(card->dev, id,
 				(const char **)&kc->name);
+		if (!spkr_amp_mngr.dapm_register)
+			continue;
 		if (!strnstr(kc->name, SPKR_AMP_W_NAME " Switch",
 				strlen(kc->name)))
 			continue;
@@ -371,6 +477,26 @@ static int spkr_amp_add_widgets(struct snd_soc_card *card, int id,
 	return 0;
 }
 
+static int spkr_amp_add_kcontrols(struct snd_soc_card *card, int id)
+{
+	int ret;
+
+	if (card == NULL)
+		return -EINVAL;
+
+	if (id < 1)
+		return snd_soc_add_card_controls(card,
+			spkr_amp_kcontrols, ARRAY_SIZE(spkr_amp_kcontrols));
+
+	ret = spkr_amp_init_controls(card, id);
+	if (ret) {
+		dev_err(card->dev, "Failed to add amp kcontrols:%d\n", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
 int spkr_amp_dev_register(struct spkr_amp *spkr_amp)
 {
 	mutex_lock(&spkr_amp_mutex);
@@ -415,9 +541,13 @@ int spkr_amp_dapm_init(struct snd_soc_card *card)
 		ret = spkr_amp_init_dev(id, true);
 		if (ret)
 			continue;
-		ret = spkr_amp_add_widgets(card, id, dapm);
-		if (!ret)
-			succ = true;
+		if (spkr_amp_mngr.dapm_register) {
+			ret = spkr_amp_add_widgets(card, id, dapm);
+			if (!ret)
+				succ = true;
+		} else {
+			ret = spkr_amp_add_kcontrols(card, id);
+		}
 	}
 
 	if (succ)
@@ -448,8 +578,13 @@ static int spkr_amp_parse_dts(struct spkr_amp_mngr *amp_mngr)
 	if (ret)
 		amp_mngr->spk_prefix = SPKR_AMP_PREFIX;
 
-	dev_info(amp_mngr->dev, "amp-ndev:%d spk-prefix:%s\n",
-			amp_mngr->ndev_dts, amp_mngr->spk_prefix);
+	ret = of_property_read_u32(np, "audio,register-dapm",
+			&amp_mngr->dapm_register);
+	if (ret)
+		amp_mngr->dapm_register = 1;
+
+	dev_info(amp_mngr->dev, "amp-ndev:%d spk-prefix:%s register-dapm:%d\n",
+			amp_mngr->ndev_dts, amp_mngr->spk_prefix, amp_mngr->dapm_register);
 
 	return 0;
 }
