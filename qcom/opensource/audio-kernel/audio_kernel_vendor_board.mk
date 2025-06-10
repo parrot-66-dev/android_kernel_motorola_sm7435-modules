@@ -12,7 +12,7 @@ endif
 ifeq ($(BUILD_AUDIO_MODULES),true)
 #ifneq ($(TARGET_BOARD_AUTO),true)
 #ifeq ($(call is-board-platform-in-list,$(TARGET_BOARD_PLATFORM)),true)
-ifneq (,$(filter portov%, $(TARGET_PRODUCT)))
+ifneq (,$(filter portov% mumba%, $(TARGET_PRODUCT)))
 BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/q6_notifier_dlkm.ko\
 	$(KERNEL_MODULES_OUT)/spf_core_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/audpkt_ion_dlkm.ko \

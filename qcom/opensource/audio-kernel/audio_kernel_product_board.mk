@@ -1,5 +1,5 @@
 # Build audio kernel driver
-ifneq (,$(filter portov%, $(TARGET_PRODUCT)))
+ifneq (,$(filter portov% mumba%, $(TARGET_PRODUCT)))
 PRODUCT_PACKAGES += $(KERNEL_MODULES_OUT)/q6_notifier_dlkm.ko\
 	$(KERNEL_MODULES_OUT)/spf_core_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/audpkt_ion_dlkm.ko \
