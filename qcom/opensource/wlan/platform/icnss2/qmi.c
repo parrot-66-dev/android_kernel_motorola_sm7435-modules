@@ -133,6 +133,8 @@ static moto_product products_list[] = {
 	{"paros",	"EMEA",	"emea.ipa"},
 	{"paros",        "all",  NV_IPA},
 	{"portov",    "all",  NV_IPA},
+	{"mumba",     "all",  NV_IPA},
+	{"mumbai",    "all",  NV_IPA},
 	/* Terminator */
 	{{0}, {0}, {0}},
 };
