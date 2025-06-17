@@ -8,7 +8,7 @@
 #include <linux/list.h>
 #include "spkr-amp-mngr.h"
 
-#define SPKR_AMP_VERSION "v1.0.2"
+#define SPKR_AMP_VERSION "v1.0.3"
 #define SPKR_AMP_W_NAME  "Ext AMP"
 #define SPKR_AMP_PREFIX  "SPK"
 
@@ -355,6 +355,10 @@ static int spkr_amp_init_controls(struct snd_soc_card *card, int id)
 				sizeof(spkr_amp_kcontrols));
 		count = ARRAY_SIZE(spkr_amp_kcontrols);
 	}
+
+	// avoid to register bypass kcontrol repeatly
+	if (id > 1)
+		count -= 1;
 
 	for (i = 0, kc = new_kctrl; i < count; i++, kc++) {
 		if (strnstr(kc->name, SPKR_AMP_W_NAME " Bypass",
