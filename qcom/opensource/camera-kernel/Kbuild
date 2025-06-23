@@ -104,6 +104,10 @@ else ifneq (,$(filter portov portov_cn, $(TARGET_PRODUCT)))
 include $(CAMERA_KERNEL_ROOT)/config/portov.mk
 else ifneq (,$(filter portov_factory, $(TARGET_PRODUCT)))
 include $(CAMERA_KERNEL_ROOT)/config/portov_factory.mk
+else ifneq (,$(filter mumba mumbai mumba_cn mumbai_cn, $(TARGET_PRODUCT)))
+include $(CAMERA_KERNEL_ROOT)/config/mumbai.mk
+else ifneq (,$(filter mumba_factory mumbai_factory, $(TARGET_PRODUCT)))
+include $(CAMERA_KERNEL_ROOT)/config/mumbai_factory.mk
 endif
 
 ifdef ($(KBUILD_EXTRA_CONFIGS))
