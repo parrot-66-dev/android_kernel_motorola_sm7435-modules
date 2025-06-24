@@ -441,7 +441,7 @@ static void android_vh_dup_task_struct(void *unused, struct task_struct *task, s
 	msched_uclamp_vh_dup_task_struct(unused, task, orig);
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+#if (LINUX_VERSION_CODE == KERNEL_VERSION(5, 10, 0))
 static void probe_android_vh_binder_priority_skip(void *ignore, struct task_struct *task,
 							bool *skip)
 {
