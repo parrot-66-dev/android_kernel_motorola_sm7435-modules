@@ -180,6 +180,12 @@ struct fts_ts_platform_data {
     u32 irq_gpio_flags;
     u32 reset_gpio;
     u32 reset_gpio_flags;
+<<<<<<< HEAD:motorola/drivers/input/touchscreen/focaltech_touch_v3_5/focaltech_core.h
+=======
+    u32 cs_gpio;
+    u32 cs_gpio_flags;
+    u32 iovcc_gpio;
+>>>>>>> 7d7569f1dd (focaltech: Add gpio to control iovdd 1.8V):drivers/input/touchscreen/focaltech_touch_v3_5/focaltech_core.h
     bool have_key;
     u32 key_number;
     u32 keys[FTS_MAX_KEYS];

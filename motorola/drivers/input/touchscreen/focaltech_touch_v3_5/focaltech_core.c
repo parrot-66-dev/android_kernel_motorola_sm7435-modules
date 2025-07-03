@@ -1583,6 +1583,10 @@ int fts_power_source_ctrl(struct fts_ts_data *ts_data, int enable)
                 FTS_ERROR("enable vdd regulator failed,ret=%d", ret);
             }
 
+	    if (gpio_is_valid(ts_data->pdata->iovcc_gpio)){
+		  gpio_direction_output(ts_data->pdata->iovcc_gpio, 1);
+	    }
+
             if (!IS_ERR_OR_NULL(ts_data->iovcc)) {
                 ret = regulator_enable(ts_data->iovcc);
                 if (ret) {
@@ -1598,6 +1602,9 @@ int fts_power_source_ctrl(struct fts_ts_data *ts_data, int enable)
             fts_set_reset(ts_data, 0);
             fts_msleep(2);
             FTS_INFO("set power to off");
+	    if (gpio_is_valid(ts_data->pdata->iovcc_gpio)){
+		  gpio_direction_output(ts_data->pdata->iovcc_gpio, 0);
+	    }
             if (!IS_ERR_OR_NULL(ts_data->iovcc)) {
                 ret = regulator_disable(ts_data->iovcc);
                 if (ret) {
@@ -1823,12 +1830,47 @@ static int fts_gpio_configure(struct fts_ts_data *ts_data)
         }
     }
 
+    /* request iovcc gpio */
+    if (gpio_is_valid(ts_data->pdata->iovcc_gpio)) {
+        ret = gpio_request(ts_data->pdata->iovcc_gpio, "fts_iovcc_gpio");
+        if (ret) {
+            FTS_ERROR("[GPIO]iovcc gpio request failed");
+            goto err_irq_gpio_dir;
+        }
+    }
+
+#ifdef CONFIG_FTS_MANUAL_CS
+    if (gpio_is_valid(ts_data->pdata->cs_gpio)) {
+        ret = gpio_request(ts_data->pdata->cs_gpio, "fts_cs_gpio");
+        if (ret) {
+            FTS_ERROR("[GPIO]cs gpio request failed");
+            goto err_irq_gpio_dir;
+        }
+    }
+
+    ret = gpio_direction_output(ts_data->pdata->cs_gpio, 1);
+    if (ret) {
+        FTS_ERROR("[GPIO]set cs gpio to high failed");
+        goto err_irq_gpio_dir;
+    } else {
+        FTS_INFO("[GPIO]set cs gpio to high success");
+    }
+#endif
+
     FTS_FUNC_EXIT();
     return 0;
 
 err_irq_gpio_dir:
     if (gpio_is_valid(ts_data->pdata->irq_gpio))
         gpio_free(ts_data->pdata->irq_gpio);
+    if (gpio_is_valid(ts_data->pdata->reset_gpio))
+        gpio_free(ts_data->pdata->reset_gpio);
+    if (gpio_is_valid(ts_data->pdata->iovcc_gpio))
+        gpio_free(ts_data->pdata->iovcc_gpio);
+#ifdef CONFIG_FTS_MANUAL_CS
+    if (gpio_is_valid(ts_data->pdata->cs_gpio))
+        gpio_free(ts_data->pdata->cs_gpio);
+#endif
 err_irq_gpio_req:
     FTS_FUNC_EXIT();
     return ret;
@@ -1955,6 +1997,20 @@ static int fts_parse_dt(struct device *dev, struct fts_ts_platform_data *pdata)
                       0);
     if (pdata->irq_gpio < 0)
         FTS_ERROR("Unable to get irq_gpio");
+
+#ifdef CONFIG_FTS_MANUAL_CS
+    pdata->cs_gpio = of_get_named_gpio(np, "cs,gpio", 0);
+    if (pdata->cs_gpio < 0) {
+        FTS_ERROR("Unable to get cs_gpio");
+    } else {
+        FTS_INFO("cs_gpio:%d", pdata->cs_gpio);
+    }
+#endif
+    /* iovcc info */
+    pdata->iovcc_gpio = of_get_named_gpio(np, "focaltech,iovcc-gpio",
+                        0);
+    if (pdata->iovcc_gpio < 0)
+        FTS_ERROR("Unable to get iovcc_gpio");
 
     ret = of_property_read_u32(np, "focaltech,max-touch-number", &temp_val);
     if (ret < 0) {
@@ -2437,6 +2493,8 @@ err_power_init:
 #endif
     if (gpio_is_valid(ts_data->pdata->reset_gpio))
         gpio_free(ts_data->pdata->reset_gpio);
+    if (gpio_is_valid(ts_data->pdata->iovcc_gpio))
+        gpio_free(ts_data->pdata->iovcc_gpio);
     if (gpio_is_valid(ts_data->pdata->irq_gpio))
         gpio_free(ts_data->pdata->irq_gpio);
 err_gpio_config:
@@ -2495,6 +2553,8 @@ int fts_ts_remove_entry(struct fts_ts_data *ts_data)
     if (ts_data->ts_workqueue) destroy_workqueue(ts_data->ts_workqueue);
     if (gpio_is_valid(ts_data->pdata->reset_gpio))
         gpio_free(ts_data->pdata->reset_gpio);
+    if (gpio_is_valid(ts_data->pdata->iovcc_gpio))
+        gpio_free(ts_data->pdata->iovcc_gpio);
     if (gpio_is_valid(ts_data->pdata->irq_gpio))
         gpio_free(ts_data->pdata->irq_gpio);
 
