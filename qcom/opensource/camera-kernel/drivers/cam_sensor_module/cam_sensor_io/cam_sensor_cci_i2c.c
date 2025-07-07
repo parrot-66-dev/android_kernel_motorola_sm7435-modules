@@ -124,27 +124,11 @@ static int32_t cam_cci_i2c_write_table_cmd(
 		return rc;
 	}
 	rc = cci_ctrl.status;
-#ifdef CONFIG_CAM_OTP_TIMEDELAY_SOUTION
-	if (write_setting->delay != 0) {
-		if (write_setting->delay > 20)
-			msleep(write_setting->delay);
-		else if (write_setting->delay)
-			usleep_range(write_setting->delay * 1000, (write_setting->delay
-				* 1000) + 1000);
-	} else {
-		if (write_setting->reg_setting->delay > 20)
-			msleep(write_setting->reg_setting->delay);
-		else if (write_setting->reg_setting->delay)
-			usleep_range(write_setting->reg_setting->delay * 1000, (write_setting->reg_setting->delay
-				* 1000) + 1000);
-	}
-#else
 	if (write_setting->delay > 20)
 		msleep(write_setting->delay);
 	else if (write_setting->delay)
 		usleep_range(write_setting->delay * 1000, (write_setting->delay
 			* 1000) + 1000);
-#endif
 	return rc;
 }
 
