@@ -281,7 +281,7 @@ static int selectFileNameByProduct(struct icnss_priv *plat_priv, char *filename,
 
 	num = num_of_products(products_list);
 	for (i = 0; i < num; i++) {
-		if (strncmp(device_ptr, (products_list+i)->hw_device, strlen(device_ptr)) == 0) {
+		if (strcmp(device_ptr, (products_list+i)->hw_device) == 0) {
 			if(strncmp(radio_ptr, (products_list+i)->hw_radio, strlen((products_list+i)->hw_radio)) == 0 ||
 				strncmp((products_list+i)->hw_radio, "all", strlen((products_list+i)->hw_radio)) == 0) {
 				if(ICNSS_BDF_ELF == bdf_type) {
