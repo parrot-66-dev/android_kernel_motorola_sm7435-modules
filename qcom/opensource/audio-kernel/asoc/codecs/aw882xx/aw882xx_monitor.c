@@ -87,8 +87,9 @@ static int aw_monitor_get_voltage(struct aw_device *aw_dev, unsigned int *vol)
 	int ret = -1;
 	uint16_t local_vol = 0;
 	struct aw_voltage_desc *desc = &aw_dev->voltage_desc;
+	struct aw_monitor_desc *monitor = &aw_dev->monitor_desc;
 
-	if (desc->reg == AW_REG_NONE) {
+	if ((monitor->monitor_data_src == AW_MON_SYS_DATA) || (desc->reg == AW_REG_NONE)) {
 		ret = aw_monitor_get_data_form_system(aw_dev, (int *)vol, POWER_SUPPLY_PROP_VOLTAGE_NOW);
 		if (ret) {
 			aw_dev_err(aw_dev->dev, "get voltage from system failed!");
@@ -116,8 +117,9 @@ static int aw_monitor_get_temperature(struct aw_device *aw_dev, int *temp)
 	unsigned int reg_val = 0;
 	uint16_t local_temp;
 	struct aw_temperature_desc *desc = &aw_dev->temp_desc;
+	struct aw_monitor_desc *monitor = &aw_dev->monitor_desc;
 
-	if (desc->reg == AW_REG_NONE) {
+	if ((monitor->monitor_data_src == AW_MON_SYS_DATA) || (desc->reg == AW_REG_NONE)) {
 		ret = aw_monitor_get_data_form_system(aw_dev, temp, POWER_SUPPLY_PROP_TEMP);
 		if (ret) {
 			aw_dev_err(aw_dev->dev, "get temperature from system failed!");
@@ -1377,7 +1379,20 @@ static void aw_monitor_parse_mode(struct aw_device *aw_dev)
 {
 	int ret = 0;
 	const char *mon_mode_str = NULL;
+	const char *mon_data_src = NULL;
 	struct aw_monitor_desc *monitor = &aw_dev->monitor_desc;
+
+	ret = of_property_read_string(aw_dev->dev->of_node, "monitor-source", &mon_data_src);
+	if (ret < 0) {
+		aw_dev_info(aw_dev->dev, "use default monitor register source data");
+	} else {
+		if (!strcmp(mon_data_src, "system"))
+			monitor->monitor_data_src = AW_MON_SYS_DATA;
+		else
+			monitor->monitor_data_src = AW_MON_REG_DATA;
+	}
+
+	aw_dev_info(aw_dev->dev, "read monitor-source value is : %d", monitor->monitor_data_src);
 
 	ret = of_property_read_string(aw_dev->dev->of_node, "monitor-mode", &mon_mode_str);
 	if (ret < 0) {

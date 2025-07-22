@@ -58,6 +58,13 @@ static DEFINE_MUTEX(g_aw_dsp_lock);
 #define AW_MSG_ID_REAL_DATA_L		(0x10013D21)
 #define AW_MSG_ID_REAL_DATA_R		(0x10013D22)
 #define AW_MSG_ID_ALGO_AUTHENTICATION	(0x10013D46)
+#define AW_MSG_ID_VOLUME_L			(0x10013D54)
+#define AW_MSG_ID_VOLUME_R			(0x10013D55)
+#define AW_MSG_ID_RAMP_EN_L			(0x10013D56)
+#define AW_MSG_ID_RAMP_EN_R			(0x10013D57)
+#define AW_MSG_ID_RAMP_PARAMS_L		(0x10013D62)
+#define AW_MSG_ID_RAMP_PARAMS_R		(0x10013D63)
+#define AW_MSG_ID_RUN_STATE_AVG		(0x10013d58)
 
 #define AFE_MSG_ID_MSG_0		(0x10013D2A)
 #define AFE_MSG_ID_MSG_1		(0x10013D2B)
@@ -1037,6 +1044,74 @@ int aw882xx_dsp_write_vol_offset(struct aw_device *aw_dev,
 	}
 
 	aw_dev_dbg(aw_dev->dev, "write %d voltage offset done", voltage_offset);
+	return ret;
+}
+
+int aw882xx_dsp_write_volume(struct aw_device *aw_dev, char *data, unsigned int data_len)
+{
+	int ret = 0;
+	uint32_t msg_id = -EINVAL;
+
+	msg_id = AW_MSG_ID_VOLUME_L;
+	ret = aw_write_msg_to_dsp_v_1_0_0_0(aw_dev, msg_id, data,
+							data_len, AW_DSP_CHANNEL_DEFAULT_NUM);
+	if (ret) {
+		aw_dev_err(aw_dev->dev, "write volume failed %d", ret);
+		return ret;
+	}
+
+	aw_dev_dbg(aw_dev->dev, "write volume done");
+	return ret;
+}
+
+int aw882xx_dsp_write_ramp_enable(struct aw_device *aw_dev, int32_t ramp_enable)
+{
+	int ret = 0;
+	uint32_t msg_id = -EINVAL;
+
+	msg_id = AW_MSG_ID_RAMP_EN_L;
+	ret = aw_write_msg_to_dsp_v_1_0_0_0(aw_dev, msg_id, (char *)&ramp_enable,
+							sizeof(int32_t), AW_DSP_CHANNEL_DEFAULT_NUM);
+	if (ret) {
+		aw_dev_err(aw_dev->dev, "write ramp enable failed %d", ret);
+		return ret;
+	}
+
+	aw_dev_dbg(aw_dev->dev, "write ramp enable done");
+	return ret;
+}
+
+int aw882xx_dsp_write_ramp_params(struct aw_device *aw_dev, char *data, unsigned int data_len)
+{
+	int ret = 0;
+	uint32_t msg_id = -EINVAL;
+
+	msg_id = AW_MSG_ID_RAMP_PARAMS_L;
+	ret = aw_write_msg_to_dsp_v_1_0_0_0(aw_dev, msg_id, data,
+							data_len, AW_DSP_CHANNEL_DEFAULT_NUM);
+	if (ret) {
+		aw_dev_err(aw_dev->dev, "write ramp params failed %d", ret);
+		return ret;
+	}
+
+	aw_dev_dbg(aw_dev->dev, "write ramp params done");
+	return ret;
+}
+
+int aw882xx_dsp_read_run_state_avg(struct aw_device *aw_dev, char *data, unsigned int data_len)
+{
+	int ret = 0;
+	uint32_t msg_id = -EINVAL;
+
+	msg_id = AW_MSG_ID_RUN_STATE_AVG;
+	ret = aw_read_msg_from_dsp_v_1_0_0_0(aw_dev, msg_id, data,
+							data_len, AW_DSP_CHANNEL_DEFAULT_NUM);
+	if (ret) {
+		aw_dev_err(aw_dev->dev, "read run state avg failed %d", ret);
+		return ret;
+	}
+	aw_dev_dbg(aw_dev->dev, "read run state avg done");
+
 	return ret;
 }
 

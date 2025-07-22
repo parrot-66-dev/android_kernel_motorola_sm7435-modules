@@ -23,6 +23,8 @@
 #define AW_REG_NONE		(0xFF)
 #define AW_NAME_MAX		(50)
 #define ALGO_VERSION_MAX	(80)
+#define AW_ALGO_VOLUMEDB		(128)//real range:-128->12;set range:0->140; db
+#define AW_ALGO_RAMPEDB			(1440)//real range:-1440->0;set range 0->1440; 0.1db
 
 #define AW_GET_MIN_VALUE(value1, value2) \
 	((value1) > (value2) ? (value2) : (value1))
@@ -106,6 +108,11 @@ enum AW_ALGO_AUTH_ID {
 enum AW_ALGO_AUTH_STATUS {
 	AW_ALGO_AUTH_WAIT = 0,
 	AW_ALGO_AUTH_OK = 1,
+};
+
+struct aw_dev_attr {
+	unsigned int pid;
+	void (*dev_init)(struct aw_device *dev);
 };
 
 struct aw_device_ops {
@@ -305,6 +312,18 @@ struct algo_auth_data {
 	int32_t check_result;
 };
 
+struct algo_volume_params {
+	int32_t volume_gain;
+	int32_t volume_time;
+};
+
+struct algo_ramp_params {
+	int32_t init_gain;
+	int32_t init_time;
+	int32_t ramp_gain;
+	int32_t ramp_time;
+};
+
 #define AW_IOCTL_MAGIC_S			'w'
 #define AW_IOCTL_GET_ALGO_AUTH			_IOWR(AW_IOCTL_MAGIC_S, 1, struct algo_auth_data)
 #define AW_IOCTL_SET_ALGO_AUTH			_IOWR(AW_IOCTL_MAGIC_S, 2, struct algo_auth_data)
@@ -323,6 +342,7 @@ struct aw_device {
 	unsigned int amppd_st;
 	unsigned int dither_st;
 	unsigned int txen_st;
+	unsigned int lpc_st;
 
 	unsigned char cur_prof;  /*current profile index*/
 	unsigned char set_prof;  /*set profile index*/
@@ -332,11 +352,18 @@ struct aw_device {
 	unsigned int re_min;
 	int voltage_offset_debug;
 	int32_t voltage_offset;
+	int32_t algo_volume_val_cnt;
+	struct algo_volume_params volume_params;
+	int32_t algo_ramp_enable;
+	int32_t algo_ramp_val_cnt;
+	struct algo_ramp_params ramp_params;
 
 	struct device *dev;
 	struct i2c_client *i2c;
 	char monitor_name[AW_NAME_MAX];
 	struct workqueue_struct *work_queue;
+
+	struct aw_switch_desc wr_desc;
 
 	struct aw_ef_desc ef_desc;
 	struct aw_efcheck_desc efcheck_desc;
@@ -371,6 +398,7 @@ struct aw_device {
 	struct aw_switch_desc mpd_desc;
 	struct aw_switch_desc dsmzth_desc;
 	struct aw_auth_desc auth_desc;
+	struct aw_switch_desc lpc_desc;
 
 	struct aw_device_ops ops;
 	struct list_head list_node;
