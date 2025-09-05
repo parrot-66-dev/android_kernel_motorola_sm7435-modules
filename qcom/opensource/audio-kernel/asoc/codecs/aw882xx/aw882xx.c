@@ -2956,7 +2956,11 @@ static int aw882xx_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id 
 	struct aw882xx *aw882xx = NULL;
 	struct device_node *np = i2c->dev.of_node;
 
-	aw_pr_info("enter addr=0x%x", i2c->addr);
+	aw_pr_info("enter: g_aw882xx_dev_cnt: %d, addr=0x%x", g_aw882xx_dev_cnt, i2c->addr);
+	if ((g_aw882xx_dev_cnt == 0) && (i2c->addr == 0x35))
+		i2c->addr = 0x34;
+	else if ((g_aw882xx_dev_cnt == 1) && (i2c->addr == 0x34))
+		i2c->addr = 0x35;
 
 	if (!i2c_check_functionality(i2c->adapter, I2C_FUNC_I2C)) {
 		aw_dev_err(&i2c->dev, "check_functionality failed");
