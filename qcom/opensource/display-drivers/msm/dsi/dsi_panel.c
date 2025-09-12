@@ -3502,6 +3502,7 @@ static int dsi_panel_parse_bl_config(struct dsi_panel *panel)
 {
 	int rc = 0;
 	u32 val = 0;
+	u32 backlight_default = 0;
 	const char *bl_type = NULL;
 	const char *data = NULL;
 	const char *state = NULL;
@@ -3544,6 +3545,17 @@ static int dsi_panel_parse_bl_config(struct dsi_panel *panel)
 						panel->name, data);
 		panel->bl_config.bl_update = BL_UPDATE_NONE;
 	}
+
+	rc = utils->read_u32(utils->data,
+				"qcom,mdss-dsi-backlight-default",
+				  &backlight_default);
+	if (rc) {
+		DSI_DEBUG("failed to read qcom,mdss-dsi-backlight-default, rc=%d\n",
+		       rc);
+		backlight_default = 890;
+		rc = 0;
+	}
+	panel->bl_config.last_bl_level = backlight_default;
 
 	panel->bl_config.bl_scale = MAX_BL_SCALE_LEVEL;
 	panel->bl_config.bl_scale_sv = MAX_SV_BL_SCALE_LEVEL;
