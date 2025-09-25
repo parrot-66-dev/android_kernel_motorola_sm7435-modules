@@ -343,6 +343,7 @@ struct aw_device {
 	unsigned int dither_st;
 	unsigned int txen_st;
 	unsigned int lpc_st;
+	unsigned int hw_st;
 
 	unsigned char cur_prof;  /*current profile index*/
 	unsigned char set_prof;  /*set profile index*/
@@ -449,6 +450,9 @@ int aw882xx_dev_remove(struct aw_device *aw_dev);
 
 /*ef lock*/
 int aw882xx_dev_check_ef_lock(struct aw_device *aw_dev);
+
+/* monitor hw status */
+void aw_dev_monitor_hw_status(struct aw_device *aw_dev);
 
 #endif
 

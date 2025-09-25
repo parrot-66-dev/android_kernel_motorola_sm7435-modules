@@ -711,6 +711,32 @@ static int aw882xx_hal_monitor_work_get(struct snd_kcontrol *kcontrol,
 
 }
 
+static int aw882xx_hw_status_info(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_info *uinfo)
+{
+	/* set kcontrol info */
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 128;
+
+	return 0;
+}
+
+static int aw882xx_hw_status_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	aw_snd_soc_codec_t *codec =
+		aw_componet_codec_ops.kcontrol_codec(kcontrol);
+	struct aw882xx *aw882xx =
+		aw_componet_codec_ops.codec_get_drvdata(codec);
+	struct aw_device *aw_dev = aw882xx->aw_pa;
+	ucontrol->value.integer.value[0] = aw_dev->hw_st;
+	aw_dev_info(aw882xx->dev, "ucontrol->value.integer.value[0]=%d",
+				aw_dev->hw_st);
+	return 0;
+}
+
 static int aw882xx_volume_info(struct snd_kcontrol *kcontrol,
 					struct snd_ctl_elem_info *uinfo)
 {
@@ -1218,6 +1244,17 @@ static int aw882xx_dynamic_create_controls(struct aw882xx *aw882xx)
 	aw882xx_dev_control[KCTL_TYPE_RAMP_PARAMS].info = aw882xx_ramp_params_info;
 	aw882xx_dev_control[KCTL_TYPE_RAMP_PARAMS].put = aw882xx_ramp_params_put;
 	aw882xx_dev_control[KCTL_TYPE_RAMP_PARAMS].get = aw882xx_ramp_params_get;
+
+	kctl_name = devm_kzalloc(aw882xx->codec->dev, AW_NAME_BUF_MAX, GFP_KERNEL);
+	if (!kctl_name)
+		return -ENOMEM;
+
+	snprintf(kctl_name, AW_NAME_BUF_MAX, "smartpa_%d_status", aw882xx->aw_pa->channel);
+
+	aw882xx_dev_control[KCTL_TYPE_GET_HW_STATUS].name = kctl_name;
+	aw882xx_dev_control[KCTL_TYPE_GET_HW_STATUS].iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+	aw882xx_dev_control[KCTL_TYPE_GET_HW_STATUS].info = aw882xx_hw_status_info;
+	aw882xx_dev_control[KCTL_TYPE_GET_HW_STATUS].get = aw882xx_hw_status_get;
 
 	aw_componet_codec_ops.add_codec_controls(aw882xx->codec,
 						aw882xx_dev_control, AW_KCTL_NUM);

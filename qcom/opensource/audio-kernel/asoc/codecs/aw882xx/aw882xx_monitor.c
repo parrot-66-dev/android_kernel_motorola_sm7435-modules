@@ -512,6 +512,8 @@ void aw882xx_monitor_start(struct aw_monitor_desc *monitor_desc)
 	monitor_desc->vol_trace.sum_val = 0;
 	monitor_desc->temp_trace.sum_val = 0;
 
+	aw_dev_monitor_hw_status(aw_dev);
+
 	aw_monitor_check_bop_status(aw_dev);
 
 	if (aw_dev->bop_en == AW_BOP_ENABLE) {
