@@ -1,9 +1,9 @@
 # add -Wall to try to catch everything we can.
 EXTRA_CFLAGS += -Wall
-EXTRA_CFLAGS += -I$(KERNEL_SRC)/../sm6475-modules/motorola/include
+EXTRA_CFLAGS += -I$(ANDROID_BUILD_TOP)/motorola/kernel/modules/include
 
-ifneq (,$(or $(findstring ctwo,$(TARGET_PRODUCT)),$(findstring arcfox,$(TARGET_PRODUCT))))
-    EXTRA_CFLAGS += -DQCOM_NFC_CLK_REQ_WAKE_SET
+ifneq ($(filter ctwo% arcfox% eiger%, $(TARGET_PRODUCT)),)
+        EXTRA_CFLAGS += -DQCOM_NFC_CLK_REQ_WAKE_SET
 endif
 
 obj-m += st21nfc.o
