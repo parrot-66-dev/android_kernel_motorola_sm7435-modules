@@ -2773,13 +2773,35 @@ static int cam_soc_util_regulator_enable_default(
 	uint32_t num_rgltr = soc_info->num_rgltr;
 
 	for (j = 0; j < num_rgltr; j++) {
+#ifdef CONFIG_CAM_SENSOR_POWER_RETRY
+		int retries = 5;
+		bool matched = false;
+#endif
 		if (soc_info->rgltr_ctrl_support == true) {
+#ifdef CONFIG_CAM_SENSOR_POWER_RETRY
+			while (retries-- && !matched) {
+				rc = cam_soc_util_regulator_enable(soc_info->rgltr[j],
+					soc_info->rgltr_name[j],
+					soc_info->rgltr_min_volt[j],
+					soc_info->rgltr_max_volt[j],
+					soc_info->rgltr_op_mode[j],
+					soc_info->rgltr_delay[j]);
+				if(rc){
+					CAM_ERR(CAM_UTIL, "%s enable failed, enable again",
+							soc_info->rgltr_name[j]);
+					mdelay(1);
+				}else{
+					matched = true;
+				}
+			}
+#else
 			rc = cam_soc_util_regulator_enable(soc_info->rgltr[j],
 				soc_info->rgltr_name[j],
 				soc_info->rgltr_min_volt[j],
 				soc_info->rgltr_max_volt[j],
 				soc_info->rgltr_op_mode[j],
 				soc_info->rgltr_delay[j]);
+#endif
 		} else {
 			if (soc_info->rgltr[j])
 				rc = regulator_enable(soc_info->rgltr[j]);

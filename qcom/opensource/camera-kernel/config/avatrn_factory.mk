@@ -1,0 +1,21 @@
+# Settings for compiling waipio camera architecture
+
+# Localized KCONFIG settings
+# Camera: Remove for user build
+ifneq (,$(filter userdebug eng, $(TARGET_BUILD_VARIANT)))
+CONFIG_CCI_DEBUG_INTF := y
+ccflags-y += -DCONFIG_CCI_DEBUG_INTF=1
+endif
+
+CONFIG_CAM_SENSOR_PROBE_DEBUG := y
+CONFIG_MOT_PROBE_SUB_DEVICE := y
+CONFIG_IMX896_MP_SENSOR_COMPATIBLE := y
+
+ccflags-y += -DCONFIG_MOT_DONGWOON_OIS_AF_DRIFT=1
+ccflags-y += -DCONFIG_MOT_OIS_EARLY_UPGRADE_FW=1
+ccflags-y += -DCONFIG_MOT_CUSTOM_CTLE_PARAM=1
+ccflags-y += -DCONFIG_MOT_SM7435_AVATRN=1
+# Flags to pass into C preprocessor
+ccflags-y += -DCONFIG_CAM_SENSOR_PROBE_DEBUG=1
+ccflags-y += -DCONFIG_MOT_PROBE_SUB_DEVICE=1
+ccflags-y += -DCONFIG_IMX896_MP_SENSOR_COMPATIBLE=1
