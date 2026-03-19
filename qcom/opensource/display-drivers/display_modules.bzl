@@ -107,6 +107,7 @@ module_entry(
             "msm/sde_vdc_helper.c",
             "msm/sde/sde_hw_dnsc_blur.c",
             "msm/sde/sde_hw_rc.c",
+            "msm/sde/sde_motUtil.c",
          ],
          "CONFIG_DRM_SDE_WB" : [
             "msm/sde/sde_wb.c",
@@ -139,6 +140,7 @@ module_entry(
             "msm/dsi/dsi_panel.c",
             "msm/dsi/dsi_clk_manager.c",
             "msm/dsi/dsi_display_test.c",
+            "msm/dsi/dsi_display_mot_ext.c",
          ],
          "CONFIG_DSI_PARSER" : [
             "msm/dsi/dsi_parser.c",

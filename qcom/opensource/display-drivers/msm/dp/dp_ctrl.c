@@ -9,6 +9,7 @@
 #include <linux/delay.h>
 #include <drm/drm_fixed.h>
 #include <linux/version.h>
+#include <linux/usb/dwc3-msm.h>
 
 #include "dp_ctrl.h"
 #include "dp_debug.h"
@@ -198,7 +199,7 @@ static void dp_ctrl_wait4video_ready(struct dp_ctrl_private *ctrl)
 	if (!wait_for_completion_timeout(&ctrl->video_comp, HZ / 2))
 		DP_WARN("SEND_VIDEO time out\n");
 	else
-		DP_DEBUG("SEND_VIDEO triggered\n");
+		DP_INFO("SEND_VIDEO triggered\n");
 }
 
 static int dp_ctrl_update_sink_vx_px(struct dp_ctrl_private *ctrl)
@@ -739,6 +740,80 @@ end:
 	ctrl->training_2_pattern = pattern;
 }
 
+static int dp_ctrl_set_usb_redriver_eq(struct dp_ctrl_private *ctrl)
+{
+	struct device_node *np;
+	struct device_node *usb_node;
+	struct platform_device *usb_pdev;
+
+	if (!ctrl || !ctrl->dev) {
+		DP_ERR("invalid args\n");
+		return -EINVAL;
+	}
+
+	np = ctrl->dev->of_node;
+
+	usb_node = of_parse_phandle(np, "usb-controller", 0);
+	if (!usb_node) {
+		DP_ERR("unable to get usb node\n");
+		return -EINVAL;
+	}
+
+	usb_pdev = of_find_device_by_node(usb_node);
+	if (!usb_pdev) {
+		of_node_put(usb_node);
+		DP_ERR("unable to get usb pdev\n");
+		return -EINVAL;
+	}
+
+	dwc3_msm_set_usb_redriver_eq(&usb_pdev->dev);
+
+	of_node_put(usb_node);
+	platform_device_put(usb_pdev);
+
+	return 0;
+}
+
+static bool is_allow_downgrade(u8 *monitor_name, int type_index)
+{
+	char *hub_monitor_blacklist[] = {"LEN T34w-20","LG Ultra HD",NULL};
+	char *dp_monitor_blacklist[] = {"P27h-30","P32p-30","Y27q-20",NULL};
+	bool is_allow = false;
+	char **monitor_list;
+
+	if(type_index == 0)
+		monitor_list = hub_monitor_blacklist;
+	else
+		monitor_list = dp_monitor_blacklist;
+
+	while(*monitor_list != NULL) {
+		DP_INFO("downgrade:value:%s\n", *monitor_list);
+		if(strstr(monitor_name, *monitor_list) != NULL){
+			is_allow = true;
+			DP_INFO("match the monitor name=%s\n", monitor_name);
+			break;
+		}
+		monitor_list++;
+	}
+
+	return is_allow;
+}
+
+static int update_redriver_seq(struct dp_ctrl_private *ctrl)
+{
+
+	DP_INFO("link_params.bw_code=%d,lane_count =%d, phy_params.v_level=%d,phy_params.p_level=%d\n",
+		ctrl->link->link_params.bw_code,ctrl->link->link_params.lane_count, ctrl->link->phy_params.v_level, ctrl->link->phy_params.p_level);
+	if (ctrl->link->link_params.bw_code == DP_LINK_BW_8_1 &&
+		ctrl->link->link_params.lane_count == 2 &&
+		ctrl->link->phy_params.v_level == 0 &&
+		ctrl->link->phy_params.p_level == 0) {
+			dp_ctrl_set_usb_redriver_eq(ctrl);
+	}
+
+	return 0;
+}
+
 static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 {
 	int rc = -EINVAL;
@@ -753,8 +828,30 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 	catalog->phy_lane_cfg(catalog, ctrl->orientation,
 				link_params->lane_count);
 
+	if (ctrl->parser->dp_downgrade &&
+		link_params->bw_code == DP_LINK_BW_8_1 &&
+		link_params->lane_count == 2 &&
+		is_allow_downgrade(ctrl->panel->edid_ctrl->monitor_name, 0)) {
+
+		ctrl->initial_bw_code = DP_LINK_BW_5_4;
+		dp_ctrl_link_rate_down_shift(ctrl);
+		downgrade = true;
+		DP_INFO("downgrade to DP_LINK_BW_5_4\n");
+	}
+
+	if (ctrl->parser->dp_downgrade &&
+		link_params->bw_code == DP_LINK_BW_8_1 &&
+		link_params->lane_count == 4 &&
+		is_allow_downgrade(ctrl->panel->edid_ctrl->monitor_name, 1)) {
+
+		ctrl->initial_bw_code = DP_LINK_BW_5_4;
+		dp_ctrl_link_rate_down_shift(ctrl);
+		downgrade = true;
+		DP_INFO("downgrade to DP_LINK_BW_5_4\n");
+	}
+
 	while (1) {
-		DP_DEBUG("bw_code=%d, lane_count=%d\n",
+		DP_INFO("bw_code=%d, lane_count=%d\n",
 			link_params->bw_code, link_params->lane_count);
 
 		rc = dp_ctrl_enable_link_clock(ctrl);
@@ -778,9 +875,10 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 		dp_ctrl_select_training_pattern(ctrl, downgrade);
 
 		rc = dp_ctrl_setup_main_link(ctrl);
-		if (!rc)
+		if (!rc) {
+			update_redriver_seq(ctrl);
 			break;
-
+		}
 		/*
 		 * Shallow means link training failure is not important.
 		 * If it fails, we still keep the link clocks on.
@@ -1004,6 +1102,7 @@ static int dp_ctrl_link_maintenance(struct dp_ctrl *dp_ctrl)
 	if (atomic_read(&ctrl->aborted))
 		goto end;
 
+	DP_INFO("stream_count=%d\n", ctrl->stream_count);
 	ctrl->aux->state |= DP_STATE_LINK_MAINTENANCE_STARTED;
 	ret = dp_ctrl_setup_main_link(ctrl);
 	ctrl->aux->state &= ~DP_STATE_LINK_MAINTENANCE_STARTED;
@@ -1307,7 +1406,7 @@ static int dp_ctrl_stream_on(struct dp_ctrl *dp_ctrl, struct dp_panel *panel)
 	ctrl->stream_count++;
 
 	link_ready = ctrl->catalog->mainlink_ready(ctrl->catalog);
-	DP_DEBUG("mainlink %s\n", link_ready ? "READY" : "NOT READY");
+	DP_INFO("mainlink %s\n", link_ready ? "READY" : "NOT READY");
 
 	/* wait for link training completion before fec config as per spec */
 	dp_ctrl_fec_setup(ctrl);
@@ -1421,7 +1520,7 @@ static int dp_ctrl_on(struct dp_ctrl *dp_ctrl, bool mst_mode,
 			ctrl->panel->link_info.num_lanes;
 	}
 
-	DP_DEBUG("bw_code=%d, lane_count=%d\n",
+	DP_INFO("bw_code=%d, lane_count=%d\n",
 		ctrl->link->link_params.bw_code,
 		ctrl->link->link_params.lane_count);
 
