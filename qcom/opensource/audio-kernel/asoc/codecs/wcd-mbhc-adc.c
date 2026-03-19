@@ -594,8 +594,11 @@ static void wcd_cancel_hs_detect_plug(struct wcd_mbhc *mbhc,
 /* called under codec_resource_lock acquisition */
 static void wcd_mbhc_adc_detect_plug_type(struct wcd_mbhc *mbhc)
 {
+        int ret = 0;
+  	int hs_micbias_swh = 0;
+	const char *hs_micbias_switch = "qcom,msm-mbhc-hsmbias-swh";
 	struct snd_soc_component *component = mbhc->component;
-
+        struct snd_soc_card *card = component->card;
 	pr_debug("%s: enter\n", __func__);
 	WCD_MBHC_RSC_ASSERT_LOCKED(mbhc);
 
@@ -603,6 +606,15 @@ static void wcd_mbhc_adc_detect_plug_type(struct wcd_mbhc *mbhc)
 		mbhc->mbhc_cb->hph_pull_down_ctrl(component, false);
 
 	WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_DETECTION_DONE, 0);
+
+	ret = of_property_read_u32(card->dev->of_node, hs_micbias_switch, &hs_micbias_swh);
+	if(ret){
+		pr_err("%s: Mic Bias swh property read fail\n", __func__);
+	}
+
+	if(hs_micbias_swh){
+		mbhc->mbhc_cb->mbhc_micbias_control(component, MIC_BIAS_2, MICB_ENABLE);
+	}
 
 	if (mbhc->mbhc_cb->mbhc_micbias_control) {
 		mbhc->mbhc_cb->mbhc_micbias_control(component, MIC_BIAS_2,

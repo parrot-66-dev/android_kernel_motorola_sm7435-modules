@@ -44,6 +44,9 @@ BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/q6_notifier_dlkm.ko\
 	$(KERNEL_MODULES_OUT)/wcd938x_slave_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/wcd937x_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/wcd937x_slave_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/aw87xxx_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/aw882xx_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/fs19xx_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/hdmi_dlkm.ko
 #endif
 #endif

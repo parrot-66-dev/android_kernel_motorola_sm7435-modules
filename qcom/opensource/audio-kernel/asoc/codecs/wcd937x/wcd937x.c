@@ -979,6 +979,7 @@ static int wcd937x_codec_enable_hphl_pa(struct snd_soc_dapm_widget *w,
 			snd_soc_component_update_bits(component,
 				WCD937X_ANA_RX_SUPPLIES,
 				0x02, 0x02);
+		wcd937x->ear_hphl_pga_count++;
 		if (wcd937x->update_wcd_event)
 			wcd937x->update_wcd_event(wcd937x->handle,
 						SLV_BOLERO_EVT_RX_MUTE,
@@ -989,10 +990,13 @@ static int wcd937x_codec_enable_hphl_pa(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_PRE_PMD:
 		wcd_disable_irq(&wcd937x->irq_info,
 				WCD937X_IRQ_HPHL_PDM_WD_INT);
-		if (wcd937x->update_wcd_event)
+		wcd937x->ear_hphl_pga_count--;
+		if (wcd937x->update_wcd_event && (wcd937x->ear_hphl_pga_count <= 0)) {
 			wcd937x->update_wcd_event(wcd937x->handle,
 						SLV_BOLERO_EVT_RX_MUTE,
 						(WCD_RX1 << 0x10 | 0x1));
+			wcd937x->ear_hphl_pga_count = 0;
+		}
 		blocking_notifier_call_chain(&wcd937x->mbhc->notifier,
 					     WCD_EVENT_PRE_HPHL_PA_OFF,
 					     &wcd937x->mbhc->wcd_mbhc);
@@ -1125,6 +1129,7 @@ static int wcd937x_codec_enable_ear_pa(struct snd_soc_dapm_widget *w,
 			snd_soc_component_update_bits(component,
 					WCD937X_ANA_RX_SUPPLIES,
 					0x02, 0x02);
+		wcd937x->ear_hphl_pga_count++;
 		if (wcd937x->update_wcd_event)
 			wcd937x->update_wcd_event(wcd937x->handle,
 						SLV_BOLERO_EVT_RX_MUTE,
@@ -1143,10 +1148,13 @@ static int wcd937x_codec_enable_ear_pa(struct snd_soc_dapm_widget *w,
 		else
 			wcd_disable_irq(&wcd937x->irq_info,
 					WCD937X_IRQ_HPHL_PDM_WD_INT);
-		if (wcd937x->update_wcd_event)
+		wcd937x->ear_hphl_pga_count--;
+		if (wcd937x->update_wcd_event && (wcd937x->ear_hphl_pga_count <= 0)) {
 			wcd937x->update_wcd_event(wcd937x->handle,
 						SLV_BOLERO_EVT_RX_MUTE,
 						(WCD_RX1 << 0x10 | 0x1));
+			wcd937x->ear_hphl_pga_count = 0;
+		}
 		break;
 	case SND_SOC_DAPM_POST_PMD:
 		if (!wcd937x->comp1_enable)
@@ -2989,6 +2997,8 @@ static int wcd937x_soc_codec_probe(struct snd_soc_component *component)
 	wcd937x->variant = variant;
 
 	wcd937x->adc_count = 0;
+
+	wcd937x->ear_hphl_pga_count = 0;
 
 	wcd937x->fw_data = devm_kzalloc(component->dev,
 					sizeof(*(wcd937x->fw_data)),

@@ -128,7 +128,7 @@ static struct wcd_mbhc_config wcd_mbhc_cfg = {
 	.key_code[5] = 0,
 	.key_code[6] = 0,
 	.key_code[7] = 0,
-	.linein_th = 5000,
+	.linein_th = 4000,
 	.moisture_en = false,
 	.mbhc_micbias = MIC_BIAS_2,
 	.anc_micbias = MIC_BIAS_2,
@@ -480,8 +480,8 @@ static void *def_wcd_mbhc_cal(void)
 	btn_high = ((void *)&btn_cfg->_v_btn_low) +
 		(sizeof(btn_cfg->_v_btn_low[0]) * btn_cfg->num_btn);
 
-	btn_high[0] = 75;
-	btn_high[1] = 150;
+	btn_high[0] = 88;  //75;
+	btn_high[1] = 138; //150;
 	btn_high[2] = 237;
 	btn_high[3] = 500;
 	btn_high[4] = 500;
@@ -1089,6 +1089,29 @@ static struct snd_soc_dai_link msm_mi2s_dai_links[] = {
 		.ignore_suspend = 1,
 		SND_SOC_DAILINK_REG(quat_mi2s_tx),
 	},
+#ifdef CONFIG_SND_SOC_AW882XX
+	{
+		.name = LPASS_BE_QUIN_MI2S_RX,
+		.stream_name = LPASS_BE_QUIN_MI2S_RX,
+		.playback_only = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.ops = &msm_common_be_ops,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		SND_SOC_DAILINK_REG(quin_mi2s_rx_aw882xx),
+	},
+	{
+		.name = LPASS_BE_QUIN_MI2S_TX,
+		.stream_name = LPASS_BE_QUIN_MI2S_TX,
+		.capture_only = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.ops = &msm_common_be_ops,
+		.ignore_suspend = 1,
+		SND_SOC_DAILINK_REG(quin_mi2s_tx_aw882xx),
+	},
+#else
 	{
 		.name = LPASS_BE_QUIN_MI2S_RX,
 		.stream_name = LPASS_BE_QUIN_MI2S_RX,
@@ -1110,6 +1133,7 @@ static struct snd_soc_dai_link msm_mi2s_dai_links[] = {
 		.ignore_suspend = 1,
 		SND_SOC_DAILINK_REG(quin_mi2s_tx),
 	},
+#endif
 	{
 		.name = LPASS_BE_SEN_MI2S_RX,
 		.stream_name = LPASS_BE_SEN_MI2S_RX,
@@ -2305,6 +2329,7 @@ static int msm_asoc_machine_probe(struct platform_device *pdev)
 	ret = msm_populate_dai_link_component_of_node(card);
 	if (ret) {
 		ret = -EPROBE_DEFER;
+		dev_info(&pdev->dev, "%s: ret: %d: msm_populate_dai_link_component_of_node\n", __func__, ret);
 		goto err;
 	}
 
@@ -2312,6 +2337,8 @@ static int msm_asoc_machine_probe(struct platform_device *pdev)
 	msm_parse_upd_configuration(pdev, pdata);
 
 	ret = devm_snd_soc_register_card(&pdev->dev, card);
+	dev_info(&pdev->dev, "%s: ret: %d: devm_snd_soc_register_card\n", __func__, ret);
+
 	if (ret == -EPROBE_DEFER) {
 		if (codec_reg_done)
 			ret = -EINVAL;
@@ -2382,6 +2409,7 @@ static int msm_asoc_machine_probe(struct platform_device *pdev)
 
 	return 0;
 err:
+	dev_info(&pdev->dev, "%s: ret: %d: FAILED\n", __func__, ret);
 	devm_kfree(&pdev->dev, pdata);
 	return ret;
 }

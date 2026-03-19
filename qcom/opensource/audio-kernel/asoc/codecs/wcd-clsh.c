@@ -332,6 +332,14 @@ static void wcd_clsh_state_hph_st(struct snd_soc_component *component,
 		mode_to_str(mode), is_enable ? "enable" : "disable");
 }
 
+static void wcd_clsh_state_hph_ear_aux(struct snd_soc_component *component,
+				  struct wcd_clsh_cdc_info *clsh_d,
+				  u8 req_state, bool is_enable, int mode)
+{
+	dev_dbg(component->dev, "%s: mode: %s, %s\n", __func__,
+		mode_to_str(mode), is_enable ? "enable" : "disable");
+}
+
 static void wcd_clsh_state_hph_r(struct snd_soc_component *component,
 				 struct wcd_clsh_cdc_info *clsh_d,
 				 u8 req_state, bool is_enable, int mode)
@@ -484,6 +492,9 @@ static bool wcd_clsh_is_state_valid(u8 state)
 	case WCD_CLSH_STATE_HPHL_EAR:
 	case WCD_CLSH_STATE_HPHR_EAR:
 	case WCD_CLSH_STATE_HPH_ST_EAR:
+	case WCD_CLSH_STATE_EAR_AUX_HPHL:
+	case WCD_CLSH_STATE_EAR_AUX_HPHR:
+	case WCD_CLSH_STATE_EAR_AUX_HPH_ST:
 		return true;
 	default:
 		return false;
@@ -598,6 +609,9 @@ void wcd_cls_h_init(struct wcd_clsh_cdc_info *clsh)
 	clsh_state_fp[WCD_CLSH_STATE_HPHL_EAR] = wcd_clsh_state_hph_ear;
 	clsh_state_fp[WCD_CLSH_STATE_HPHR_EAR] = wcd_clsh_state_hph_ear;
 	clsh_state_fp[WCD_CLSH_STATE_HPH_ST_EAR] = wcd_clsh_state_hph_ear;
+	clsh_state_fp[WCD_CLSH_STATE_EAR_AUX_HPHL] = wcd_clsh_state_hph_ear_aux;
+	clsh_state_fp[WCD_CLSH_STATE_EAR_AUX_HPHR] = wcd_clsh_state_hph_ear_aux;
+	clsh_state_fp[WCD_CLSH_STATE_EAR_AUX_HPH_ST] = wcd_clsh_state_hph_ear_aux;
 	/* Set interpolaotr modes to NONE */
 	wcd_clsh_set_int_mode(clsh, WCD_CLSH_STATE_EAR, CLS_NONE);
 	wcd_clsh_set_int_mode(clsh, WCD_CLSH_STATE_HPHL, CLS_NONE);

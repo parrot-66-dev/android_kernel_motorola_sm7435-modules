@@ -151,9 +151,6 @@ audio_modules.register(
         "CONFIG_SND_SOC_LAHAINA": [
             "lahaina.c"
         ],
-        "CONFIG_SND_SOC_WAIPIO": [
-            "waipio.c"
-        ],
         "CONFIG_SND_SOC_KALAMA": [
             "kalama.c"
         ],
@@ -177,7 +174,13 @@ audio_modules.register(
         ],
         "CONFIG_SND_SOC_SUN": [
             "sun.c"
-        ]
+        ],
+        "CONFIG_SND_MMI_CUSCO": [
+            "waipio-cusco-parrot.c"
+        ],
+        "CONFIG_SND_MMI_PAROS": [
+            "waipio-parrot-paro.c"
+        ],
     },
 )
 # >>>> ASOC/CODEC MODULES <<<<
@@ -463,4 +466,51 @@ audio_modules.register(
     path = ASOC_CODECS_PATH + "/wcd939x",
     config_option = "CONFIG_SND_SOC_WCD939X_SLAVE",
     srcs = ["wcd939x-slave.c"]
+)
+# >>>> AW87XXX MODULES <<<<
+audio_modules.register(
+    name = "aw87xxx_dlkm",
+    path = ASOC_CODECS_PATH + "/aw87xxx",
+    config_option = "CONFIG_SND_SOC_AW87XXX",
+    srcs = [
+        "aw87xxx.c",
+        "aw87xxx_device.c",
+        "aw87xxx_monitor.c",
+        "aw87xxx_bin_parse.c",
+        "aw87xxx_dsp.c",
+        "aw87xxx_acf_bin.c",
+    ],
+)
+# >>>> AW882XX MODULES <<<<
+audio_modules.register(
+    name = "aw882xx_dlkm",
+    path = ASOC_CODECS_PATH + "/aw882xx",
+    config_option = "CONFIG_SND_SOC_AW882XX",
+    srcs = [
+        "aw882xx.c",
+        "aw882xx_dsp.c",
+        "aw882xx_init.c",
+        "aw882xx_spin.c",
+        "aw882xx_calib.c",
+        "aw882xx_device.c",
+        "aw882xx_monitor.c",
+        "aw882xx_bin_parse.c",
+    ],
+)
+# >>>> FS192XX MODULES <<<<
+audio_modules.register(
+    name = "fs19xx_dlkm",
+    path = ASOC_CODECS_PATH + "/fs19xx",
+    config_option = "CONFIG_SND_SOC_FS19XX",
+    srcs = [
+        'fsm_core.c',
+        'fsm_codec.c',
+        'fsm_firmware.c',
+        'fsm_i2c.c',
+        'fsm_misc.c',
+        'fsm_mtk_ipi.c',
+        'fsm_q6afe.c',
+        'fsm_sysfs.c',
+        'fs1958.c',
+    ],
 )
