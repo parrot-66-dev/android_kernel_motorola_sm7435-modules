@@ -111,4 +111,6 @@ inline struct icc_path *cam_icc_get_path(struct device *dev,
 	const int src_id, const int dst_id, const char *path_name, bool use_path_name);
 #endif
 
+long cam_dma_buf_set_name(struct dma_buf *dmabuf, const char *name);
+
 #endif /* _CAM_COMPAT_H_ */

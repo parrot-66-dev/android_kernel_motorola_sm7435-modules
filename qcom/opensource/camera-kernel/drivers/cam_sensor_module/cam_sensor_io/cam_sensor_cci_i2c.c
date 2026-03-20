@@ -129,7 +129,6 @@ static int32_t cam_cci_i2c_write_table_cmd(
 	else if (write_setting->delay)
 		usleep_range(write_setting->delay * 1000, (write_setting->delay
 			* 1000) + 1000);
-
 	return rc;
 }
 

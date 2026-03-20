@@ -805,7 +805,7 @@ put_buf:
 	return rc;
 }
 
-static int cam_mem_util_check_alloc_flags(struct cam_mem_mgr_alloc_cmd *cmd)
+static int cam_mem_util_check_alloc_flags(struct cam_mem_mgr_alloc_cmd_v2 *cmd)
 {
 	if (cmd->num_hdl > CAM_MEM_MMU_MAX_HANDLE) {
 		CAM_ERR(CAM_MEM, "Num of mmu hdl exceeded maximum(%d)",
@@ -829,7 +829,7 @@ static int cam_mem_util_check_alloc_flags(struct cam_mem_mgr_alloc_cmd *cmd)
 	return 0;
 }
 
-static int cam_mem_util_check_map_flags(struct cam_mem_mgr_map_cmd *cmd)
+static int cam_mem_util_check_map_flags(struct cam_mem_mgr_map_cmd_v2 *cmd)
 {
 	if (!cmd->flags) {
 		CAM_ERR(CAM_MEM, "Invalid flags");
@@ -919,7 +919,7 @@ multi_map_fail:
 	return rc;
 }
 
-int cam_mem_mgr_alloc_and_map(struct cam_mem_mgr_alloc_cmd *cmd)
+int cam_mem_mgr_alloc_and_map(struct cam_mem_mgr_alloc_cmd_v2 *cmd)
 {
 	int rc;
 	int32_t idx;
@@ -979,6 +979,9 @@ int cam_mem_mgr_alloc_and_map(struct cam_mem_mgr_alloc_cmd *cmd)
 		cam_mem_mgr_print_tbl();
 		goto slot_fail;
 	}
+
+	if (cam_dma_buf_set_name(dmabuf, cmd->buf_name))
+		CAM_ERR(CAM_MEM, "set dma buffer name(%s) failed", cmd->buf_name);
 
 	if ((cmd->flags & CAM_MEM_FLAG_HW_READ_WRITE) ||
 		(cmd->flags & CAM_MEM_FLAG_HW_SHARED_ACCESS) ||
@@ -1065,9 +1068,9 @@ int cam_mem_mgr_alloc_and_map(struct cam_mem_mgr_alloc_cmd *cmd)
 	cmd->out.vaddr = 0;
 
 	CAM_DBG(CAM_MEM,
-		"fd=%d, flags=0x%x, num_hdl=%d, idx=%d, buf handle=%x, len=%zu, i_ino=%lu",
+		"fd=%d, flags=0x%x, num_hdl=%d, idx=%d, buf handle=%x, len=%zu, i_ino=%lu, name:%s",
 		cmd->out.fd, cmd->flags, cmd->num_hdl, idx, cmd->out.buf_handle,
-		tbl.bufq[idx].len, tbl.bufq[idx].i_ino);
+		tbl.bufq[idx].len, tbl.bufq[idx].i_ino, cmd->buf_name);
 
 	return rc;
 
@@ -1097,7 +1100,7 @@ static bool cam_mem_util_is_map_internal(int32_t fd, unsigned i_ino)
 	return is_internal;
 }
 
-int cam_mem_mgr_map(struct cam_mem_mgr_map_cmd *cmd)
+int cam_mem_mgr_map(struct cam_mem_mgr_map_cmd_v2 *cmd)
 {
 	int32_t idx;
 	int rc;
@@ -1147,6 +1150,9 @@ int cam_mem_mgr_map(struct cam_mem_mgr_map_cmd *cmd)
 		cam_mem_mgr_print_tbl();
 		goto slot_fail;
 	}
+
+	if (cam_dma_buf_set_name(dmabuf, cmd->buf_name))
+		CAM_ERR(CAM_MEM, "set dma buffer name(%s) failed", cmd->buf_name);
 
 	if ((cmd->flags & CAM_MEM_FLAG_HW_READ_WRITE) ||
 		(cmd->flags & CAM_MEM_FLAG_PROTECTED_MODE)) {
@@ -1206,9 +1212,9 @@ int cam_mem_mgr_map(struct cam_mem_mgr_map_cmd *cmd)
 	cmd->out.vaddr = 0;
 	cmd->out.size = (uint32_t)len;
 	CAM_DBG(CAM_MEM,
-		"fd=%d, flags=0x%x, num_hdl=%d, idx=%d, buf handle=%x, len=%zu, i_ino=%lu",
+		"fd=%d, flags=0x%x, num_hdl=%d, idx=%d, buf handle=%x, len=%zu, i_ino=%lu, name:%s",
 		cmd->fd, cmd->flags, cmd->num_hdl, idx, cmd->out.buf_handle,
-		tbl.bufq[idx].len, tbl.bufq[idx].i_ino);
+		tbl.bufq[idx].len, tbl.bufq[idx].i_ino, cmd->buf_name);
 
 	return rc;
 map_fail:
