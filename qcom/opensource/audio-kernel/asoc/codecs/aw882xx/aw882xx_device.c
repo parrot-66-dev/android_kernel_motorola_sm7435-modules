@@ -449,6 +449,13 @@ static unsigned int aw_dev_reg_value_check(struct aw_device *aw_dev, unsigned in
 		}
 	}
 
+	/*keep IIC enabel*/
+	if (reg_addr == aw_dev->wr_desc.reg) {
+		reg_val &= aw_dev->wr_desc.mask;
+		reg_val |= aw_dev->wr_desc.enable;
+	}
+
+
 	/*keep amppd close*/
 	if (reg_addr == aw_dev->amppd_desc.reg) {
 		reg_val &= aw_dev->amppd_desc.mask;
@@ -519,6 +526,11 @@ static unsigned int aw_dev_reg_value_check(struct aw_device *aw_dev, unsigned in
 		aw_dev_info(aw_dev->dev, "dither_st=0x%04x", aw_dev->dither_st);
 	}
 
+	/* get lpc_deten */
+	if (reg_addr == aw_dev->lpc_desc.reg) {
+		aw_dev->lpc_st = reg_val & (~aw_dev->lpc_desc.mask);
+		aw_dev_info(aw_dev->dev, "lpc_st=0x%04x", aw_dev->lpc_st);
+	}
 	return reg_val;
 
 }
@@ -644,6 +656,8 @@ static void aw_dev_fade_out(struct aw_device *aw_dev)
 
 static void aw_dev_switch(struct aw_device *aw_dev, struct aw_switch_desc *btn, bool enable)
 {
+	if (btn->reg == AW_REG_NONE)
+		return;
 
 	aw_dev_dbg(aw_dev->dev, "enter %s", btn->name);
 
@@ -657,6 +671,43 @@ static void aw_dev_switch(struct aw_device *aw_dev, struct aw_switch_desc *btn, 
 				btn->disable);
 	}
 	aw_dev_info(aw_dev->dev, "%s set %d done", btn->name, enable);
+}
+
+void aw_dev_monitor_hw_status(struct aw_device *aw_dev)
+{
+	int ret = -1;
+	unsigned int reg_val = 0;
+	struct aw_sysst_desc *desc = &aw_dev->sysst_desc;
+	int32_t re = 0;
+	int32_t te = 0;
+
+	ret = aw_dev->ops.aw_i2c_read(aw_dev->i2c, desc->reg, &reg_val);
+	if (ret) {
+		aw_dev_err(aw_dev->dev, "I2C read fail");
+		reg_val = 0;
+	}
+
+	ret = aw882xx_dsp_read_st(aw_dev, &re, &te);
+	if (ret) {
+		aw_dev_err(aw_dev->dev, "get r0 failed!");
+		re = 0;
+	}
+	aw_dev_info(aw_dev->dev, "sysst check: 0x%x, re: %d",reg_val, re);
+
+	if(re == 99000){
+		aw_dev->hw_st = aw_dev->hw_st | 0x0001;
+		aw_dev_info(aw_dev->dev, "speaker is Open Circuit");
+	}
+	if(reg_val & 0x0008){
+		aw_dev->hw_st = aw_dev->hw_st | 0x0002;
+		aw_dev_info(aw_dev->dev, "sysst check: %x",reg_val);
+	}
+#if 0
+	if(reg_val & 0x0002){
+		aw_dev->hw_st = aw_dev->hw_st | 0x0008;
+		aw_dev_info(aw_dev->dev, "over temp check: %x",reg_val);
+	}
+#endif
 }
 
 static int aw_dev_mode1_pll_check(struct aw_device *aw_dev)
@@ -691,6 +742,9 @@ static int aw_dev_mode2_pll_check(struct aw_device *aw_dev)
 	unsigned int reg_val = 0;
 	struct aw_cco_mux_desc *cco_mux_desc = &aw_dev->cco_mux_desc;
 
+	if (cco_mux_desc->reg == AW_REG_NONE)
+		return 0;
+
 	aw_dev->ops.aw_i2c_read(aw_dev->i2c, cco_mux_desc->reg, &reg_val);
 	reg_val &= (~cco_mux_desc->mask);
 	aw_dev_dbg(aw_dev->dev, "REG_PLLCTRL1_bit14 = 0x%04x", reg_val);
@@ -721,12 +775,16 @@ static int aw_dev_syspll_check(struct aw_device *aw_dev)
 
 	ret = aw_dev_mode1_pll_check(aw_dev);
 	if (ret < 0) {
-		aw_dev_err(aw_dev->dev,
-			"mode1 check iis failed try switch to mode2 check");
-
-		ret = aw_dev_mode2_pll_check(aw_dev);
-		if (ret < 0)
-			aw_dev_err(aw_dev->dev, "mode2 check iis failed");
+		if (aw_dev->cco_mux_desc.reg != AW_REG_NONE) {
+			aw_dev_err(aw_dev->dev,
+				"mode1 check iis failed try switch to mode2 check");
+			ret = aw_dev_mode2_pll_check(aw_dev);
+			if (ret < 0)
+				aw_dev_err(aw_dev->dev, "mode2 check iis failed");
+		} else {
+			aw_dev_err(aw_dev->dev,
+						"mode1 check iis failed");
+		}
 	}
 
 	return ret;
@@ -902,7 +960,7 @@ int aw882xx_device_start(struct aw_device *aw_dev)
 	aw_dev_boost_type_set(aw_dev);
 
 	aw_dev_switch(aw_dev, &aw_dev->dither_desc, false);
-
+	aw_dev_switch(aw_dev, &aw_dev->lpc_desc, false);
 	/*power on*/
 	aw_dev_switch(aw_dev, &aw_dev->pwd_desc, false);
 	usleep_range(AW_2000_US, AW_2000_US + 10);
@@ -955,10 +1013,11 @@ int aw882xx_device_start(struct aw_device *aw_dev)
 	else
 		aw882xx_dev_mute(aw_dev, true);
 
+	/* open lpc */
+	if (aw_dev->lpc_st)
+		aw_dev_switch(aw_dev, &aw_dev->lpc_desc, true);
 	/*clear inturrupt*/
 	aw882xx_dev_clear_int_status(aw_dev);
-	/*set inturrupt mask*/
-	aw882xx_dev_set_intmask(aw_dev, true);
 
 	aw882xx_monitor_start(&aw_dev->monitor_desc);
 	aw_dev_cali_re_update(aw_dev);
@@ -967,6 +1026,8 @@ int aw882xx_device_start(struct aw_device *aw_dev)
 	aw_dev_algo_authentication(aw_dev);
 #endif
 	aw_dev->status = AW_DEV_PW_ON;
+	/*set inturrupt mask*/
+	aw882xx_dev_set_intmask(aw_dev, true);
 	aw_dev_info(aw_dev->dev, "done");
 	return 0;
 }
@@ -1271,6 +1332,11 @@ int aw882xx_dev_set_intmask(struct aw_device *aw_dev, bool flag)
 	struct aw_int_desc *desc = &aw_dev->int_desc;
 	int ret = -1;
 
+	if ((aw_dev->status == AW_DEV_PW_OFF) && flag) {
+		flag = false;
+		aw_dev_info(aw_dev->dev, "dev have power off, cannot start intrpt");
+	}
+
 	if (flag)
 		ret = aw_dev->ops.aw_i2c_write(aw_dev->i2c, desc->mask_reg,
 					desc->int_mask);
@@ -1376,6 +1442,9 @@ int aw882xx_dev_init(struct aw_device *aw_dev, struct aw_container *aw_cfg)
 
 	aw_dev_soft_reset(aw_dev);
 
+	aw_dev_switch(aw_dev, &aw_dev->wr_desc, true);
+
+
 	aw_dev->cur_prof = AW_INIT_PROFILE;
 	aw_dev->set_prof = AW_INIT_PROFILE;
 	ret = aw_dev_reg_fw_update(aw_dev);
@@ -1391,6 +1460,8 @@ int aw882xx_dev_init(struct aw_device *aw_dev, struct aw_container *aw_cfg)
 	aw_dev->status = AW_DEV_PW_ON;
 	aw882xx_device_stop(aw_dev);
 
+	aw_dev->algo_volume_val_cnt = 0;
+	aw_dev->algo_ramp_val_cnt = 0;
 	aw_dev_info(aw_dev->dev, "init done");
 	return 0;
 }
@@ -1522,8 +1593,7 @@ int aw882xx_dev_check_ef_lock(struct aw_device *aw_dev)
 
 	for (i = 0; i < ef_desc->count; i++) {
 		aw_dev->ops.aw_i2c_read(aw_dev->i2c, ef_desc->sequence[i].reg, &reg_val);
-		if ((reg_val & (~ef_desc->sequence[i].mask)) != ef_desc->sequence[i].check_val)
-			return -EINVAL;
+		aw_dev_info(aw_dev->dev, "read reg:0x%x = 0x%x", ef_desc->sequence[i].reg, reg_val);
 	}
 
 	return 0;

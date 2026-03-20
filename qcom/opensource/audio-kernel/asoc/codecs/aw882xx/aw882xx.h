@@ -45,18 +45,6 @@ enum {
 	AW882XX_STREAM_OPEN,
 };
 
-enum aw882xx_chipid {
-	PID_1852_ID = 0x1852,
-	PID_2013_ID = 0x2013,
-	PID_2032_ID = 0x2032,
-	PID_2055_ID = 0x2055,
-	PID_2055A_ID = 0x2055A,
-	PID_2071_ID = 0x2071,
-	PID_2113_ID = 0x2113,
-	PID_2116_ID = 0x2116,
-	PID_2308_ID = 0x2308,
-};
-
 #define AW882XX_SOFT_RESET_REG		(0x00)
 #define AW882XX_SOFT_RESET_VALUE	(0x55aa)
 
@@ -81,6 +69,11 @@ MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
 #if KERNEL_VERSION(5, 10, 0) <= LINUX_VERSION_CODE
 #define AW_KERNEL_VER_OVER_5_10_0
 #endif
+
+#if KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE
+#define AW_KERNEL_VER_OVER_6_0_0
+#endif
+
 #if KERNEL_VERSION(6, 1, 0) <= LINUX_VERSION_CODE
 #define AW_KERNEL_VER_OVER_6_1_0
 #endif
@@ -128,6 +121,10 @@ enum {
 	KCTL_TYPE_MON_HAL,
 	KCTL_TYPE_VOLTAGE_OFFSET,
 	KCTL_TYPE_IV_OUTPUT,
+	KCTL_TYPE_ALGO_VOLUME,
+	KCTL_TYPE_RAMP_SWITCH,
+	KCTL_TYPE_RAMP_PARAMS,
+	KCTL_TYPE_GET_HW_STATUS,
 	AW_KCTL_NUM,
 
 };
@@ -183,6 +180,7 @@ struct aw882xx {
 	int cstream;
 
 	unsigned char phase_sync;	/* phase sync */
+	unsigned char mute_sync;	/* mute sync */
 	unsigned char dc_flag;
 	unsigned char dbg_en_prof;	/* debug enable/disable profile function */
 	unsigned char allow_pw;		/* allow power */
@@ -213,6 +211,7 @@ struct aw882xx {
 };
 
 int aw882xx_init(struct aw_device *aw_pa);
+int aw882xx_chipid_auth(unsigned int chip_id);
 int aw882xx_hw_reset(struct aw882xx *aw882xx);
 
 
