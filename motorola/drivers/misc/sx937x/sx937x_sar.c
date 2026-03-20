@@ -36,6 +36,11 @@
 #include <linux/input/sx937x.h> 	/* main struct, interrupt,init,pointers */
 #include "base.h"
 
+#ifdef CONFIG_CAPSENSE_HALL_CAL
+#include <linux/phone_case_detection_notify.h>
+#endif
+
+
 #define LOG_TAG "[sar SX937x]: "
 
 #define LOG_INFO(fmt, args...)    pr_info(LOG_TAG "[INFO]" "<%s><%d>"fmt, __func__, __LINE__, ##args)
@@ -866,7 +871,7 @@ static void sx937x_reg_init(psx93XX_t this)
 		sx937x_i2c_write_16bit(this, SX937X_COMMAND, 0xF);  //enable phase control
 	}
 	else {
-		LOG_ERR("ERROR! platform data 0x%p\n",pDevice->hw);
+		LOG_ERR("ERROR! platform data exception\n");
 	}
 
 }
@@ -1185,7 +1190,6 @@ static int sx937x_parse_dt(struct sx937x_platform_data *pdata, struct device *de
 			return -ENOMEM;
 		}
 
-		current_dsi = get_dsi_display_name();
 		/*
 		   if three's no "support-panel-num" in dts or
 		   there's no matched panel_name(maybe it is a bare board),
@@ -1194,6 +1198,7 @@ static int sx937x_parse_dt(struct sx937x_platform_data *pdata, struct device *de
 		if(!of_property_read_u32(dNode,"support-panel-num",&support_panel_num))
 		{
 			LOG_INFO("support_panel_num is %d \n", support_panel_num);
+			current_dsi = get_dsi_display_name();
 			for (i = 0; i < support_panel_num; i++) {
 				if(of_property_read_string_index(dNode, "support-panel-names", i, &panel_name))
 				{
@@ -1427,13 +1432,14 @@ static int ps_notify_callback(struct notifier_block *self,
 		LOG_DBG("ps notification: event = %lu\n", event);
 		retval = ps_get_state(psy, &present);
 		if (retval) {
-			return retval;
+			LOG_ERR("psy get state failed, ret=%d\n", retval);
+			return NOTIFY_DONE;
 		}
 
 		if (event == PSY_EVENT_PROP_CHANGED) {
 			if (data->ps_is_present == present) {
 				LOG_DBG("ps present state not change\n");
-				return 0;
+				return NOTIFY_DONE;
 			}
 		}
 		data->ps_is_present = present;
@@ -1447,8 +1453,10 @@ static int ps_notify_callback(struct notifier_block *self,
 		LOG_DBG("phone ps notification: event = %lu\n", event);
 
 		retval = ps_get_state(psy, &present);
-		if (retval)
-			return retval;
+		if (retval) {
+			LOG_ERR("psy get state failed,ret=%d\n", retval);
+			return NOTIFY_DONE;
+		}
 
 		if (data->phone_is_present != present) {
 			data->phone_is_present = present;
@@ -1457,8 +1465,42 @@ static int ps_notify_callback(struct notifier_block *self,
 	}
 #endif
 
-	return 0;
+	return NOTIFY_DONE;
 }
+
+#ifdef CONFIG_CAPSENSE_HALL_CAL
+static void hall_detection_notify_callback_work(struct work_struct *work)
+{
+    u32 temp = 0;
+    sx937x_i2c_read_16bit(global_sx937x, SX937X_GENERAL_SETUP, &temp);
+    if (temp & 0x000000FF) {
+        LOG_DBG("Hall state change, Going to force calibrate\n");
+        manual_offset_calibration(global_sx937x);
+    }
+}
+
+static int hall_detection_notifier_callback(struct notifier_block *self,
+                    unsigned long event, void *p)
+{
+    struct sx937x_platform_data *data =
+        container_of(self, struct sx937x_platform_data, hall_nb);
+    int present;
+
+    present = event;
+    LOG_DBG("hall_detection_notifier_callback,present=%d\n",present);
+
+    if (data->hall_is_present != present) {
+        data->hall_is_present = present;
+        LOG_INFO("hall_is_present=%d\n",data->hall_is_present);
+		/* Delay calibration by 1 second (HZ) to debounce rapid attach/detach events from the Hall sensor. */
+        schedule_delayed_work(&data->hall_notify_work, HZ);
+    } else {
+        LOG_DBG("hall present state not change\n");
+    }
+
+    return 0;
+}
+#endif
 
 #ifdef CONFIG_CAPSENSE_FLIP_CAL
 static void write_flip_regs(int num_regs, struct smtc_reg_data *regs)
@@ -1535,6 +1577,10 @@ static int sx937x_probe(struct i2c_client *client)
 #ifdef CONFIG_CAPSENSE_USB_CAL
 	struct power_supply *psy = NULL;
 #endif
+#ifdef CONFIG_CAPSENSE_HALL_CAL
+    int rc;
+#endif
+
 	struct totalButtonInformation *pButtonInformationData = NULL;
 	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 
@@ -1723,7 +1769,7 @@ static int sx937x_probe(struct i2c_client *client)
 					pButtonInformationData->buttons[i].sensors_capsensor_cdev.type = SENSOR_TYPE_MOTO_CAPSENSE;
 					pButtonInformationData->buttons[i].sensors_capsensor_cdev.max_range = "5";
 					pButtonInformationData->buttons[i].sensors_capsensor_cdev.resolution = "5.0";
-					pButtonInformationData->buttons[i].sensors_capsensor_cdev.sensor_power = "3";
+					pButtonInformationData->buttons[i].sensors_capsensor_cdev.sensor_power = "0.1";
 					pButtonInformationData->buttons[i].sensors_capsensor_cdev.min_delay = 0;
 					pButtonInformationData->buttons[i].sensors_capsensor_cdev.fifo_reserved_event_count = 0;
 					pButtonInformationData->buttons[i].sensors_capsensor_cdev.fifo_max_event_count = 0;
@@ -1754,6 +1800,7 @@ static int sx937x_probe(struct i2c_client *client)
 				power_supply_unreg_notifier(&pplatData->ps_notif);
 			}
 		}
+
 #ifdef CONFIG_CAPSENSE_FLIP_CAL
 		if (of_property_read_bool(client->dev.of_node, "extcon")) {
 			pplatData->flip_notif.notifier_call = flip_notify_callback;
@@ -1776,6 +1823,23 @@ static int sx937x_probe(struct i2c_client *client)
 		} else
 			LOG_ERR("extcon not in dev tree!\n");
 #endif
+#endif
+
+#ifdef CONFIG_CAPSENSE_HALL_CAL
+        INIT_DELAYED_WORK(&pplatData->hall_notify_work, hall_detection_notify_callback_work);
+        pplatData->hall_nb.notifier_call = hall_detection_notifier_callback;
+        err = phone_case_detection_register_client(&pplatData->hall_nb);
+        if (err)
+            LOG_ERR("Unable to register hall_nb: %d\n", err);
+
+        rc = phone_case_detection_get_hall_state();
+        if (rc < 0) {
+            LOG_ERR("hall not enabled rc=%d\n", rc);
+            phone_case_detection_unregister_client(&pplatData->hall_nb);
+        } else {
+            pplatData->hall_is_present = rc;
+            LOG_INFO("sx937x_probe:hall_is_present=%d\n",pplatData->hall_is_present);
+        }
 #endif
 
 		sx93XX_IRQ_init(this);

@@ -47,6 +47,10 @@ static ssize_t goodix_ts_stylus_mode_show(struct device *dev,
 		struct device_attribute *attr, char *buf);
 static ssize_t goodix_ts_sensitivity_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size);
+#ifdef CONFIG_GTP_HARDWARE_STATUS
+static ssize_t goodix_ts_hardware_status_show(struct device *dev,
+		struct device_attribute *attr, char *buf);
+#endif
 #ifdef CONFIG_GTP_LAST_TIME
 static ssize_t goodix_ts_timestamp_show(struct device *dev,
 		struct device_attribute *attr, char *buf);
@@ -94,6 +98,9 @@ static DEVICE_ATTR(stylus_mode, (S_IRUGO | S_IWUSR | S_IWGRP),
 	goodix_ts_stylus_mode_show, goodix_ts_stylus_mode_store);
 static DEVICE_ATTR(sensitivity, (S_IRUGO | S_IWUSR | S_IWGRP),
 	NULL, goodix_ts_sensitivity_store);
+#ifdef CONFIG_GTP_HARDWARE_STATUS
+static DEVICE_ATTR(hardware_status, S_IRUGO, goodix_ts_hardware_status_show, NULL);
+#endif
 #ifdef CONFIG_GTP_LAST_TIME
 static DEVICE_ATTR(timestamp, S_IRUGO, goodix_ts_timestamp_show, NULL);
 #endif
@@ -173,7 +180,9 @@ static int goodix_ts_mmi_extend_attribute_group(struct device *dev, struct attri
 
 	if (core_data->board_data.stowed_mode_ctrl)
 		ADD_ATTR(stowed);
-
+#ifdef CONFIG_GTP_HARDWARE_STATUS
+	ADD_ATTR(hardware_status);
+#endif
 	if (core_data->board_data.pocket_mode_ctrl)
 		ADD_ATTR(pocket_mode);
 
@@ -940,6 +949,23 @@ exit:
 }
 #endif
 
+#ifdef CONFIG_GTP_HARDWARE_STATUS
+static ssize_t goodix_ts_hardware_status_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct platform_device *pdev;
+	struct goodix_ts_core *core_data;
+	u8 hardware_status = 0;
+
+	dev = MMI_DEV_TO_TS_DEV(dev);
+	GET_GOODIX_DATA(dev);
+
+	hardware_status = core_data->open_status;
+	ts_info("Read touch hardware status = %d.\n", hardware_status);
+	return scnprintf(buf, PAGE_SIZE, "0x%02x", hardware_status);
+}
+#endif
+
 #ifdef CONFIG_ENABLE_GTP_VIRTUAL_FOD
 static ssize_t goodix_ts_fp_event_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
@@ -1471,6 +1497,7 @@ static int goodix_ts_mmi_panel_state(struct device *dev,
 static int goodix_ts_mmi_pre_resume(struct device *dev) {
 	struct platform_device *pdev;
 	struct goodix_ts_core *core_data;
+	int spend_time;
 
 	ts_info("Resume start");
 	GET_GOODIX_DATA(dev);
@@ -1480,6 +1507,15 @@ static int goodix_ts_mmi_pre_resume(struct device *dev) {
 	if (core_data->gesture_enabled) {
 		core_data->hw_ops->irq_enable(core_data, false);
 		disable_irq_wake(core_data->irq);
+	} else {
+		core_data->end_time = ktime_get();
+		spend_time = ktime_to_ms(ktime_sub(core_data->end_time, core_data->start_time));
+		ts_info("spend_time after power on: %dms", spend_time);
+		if ((spend_time > 0) && (spend_time < GOODIX_NORMAL_RESET_DELAY_MS)) {
+			msleep(GOODIX_NORMAL_RESET_DELAY_MS - spend_time);
+			core_data->end_time = 0;
+			core_data->start_time = 0;
+		}
 	}
 
 	return 0;

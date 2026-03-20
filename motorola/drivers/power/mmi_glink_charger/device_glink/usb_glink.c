@@ -24,6 +24,8 @@
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
 
+#define ULOG_DURATION_MS	60000
+
 static struct usb_glink_dev *this_chip = NULL;
 static int glink_usb_init(struct usb_glink_dev *chip);
 static int glink_usb_lpd_init(struct usb_glink_dev *chip);
@@ -63,10 +65,7 @@ static ssize_t typec_reset_store(struct device *dev,
 		return -EINVAL;
 	}
 
-	if (reset)
-		mmi_warn(chip->mmi_chip, "typec_reset triggered\n");
-	else
-		return count;
+	mmi_warn(chip->mmi_chip, "typec_reset triggered:%d\n", reset);
 
 	rc = qti_charger_set_property(OEM_PROP_TYPEC_RESET,
 			&reset,
@@ -106,6 +105,24 @@ static void glink_usb_notify_uevent(struct usb_glink_dev *chip, int event)
 	kobject_uevent_env(&chip->batt_psy->dev.kobj, KOBJ_CHANGE, chip->uenvp);
 }
 
+static bool glink_usb_check_usb_info(struct usb_glink_dev *chip, struct usb_info *usb_info)
+{
+	if (!chip || !usb_info) {
+		pr_err("Invalid usb info\n");
+		return false;
+	}
+
+	if ((abs(usb_info->cid_st) > 1)
+		|| (abs(usb_info->lpd_st) > 1)
+		|| (abs(usb_info->pd_active) > 1)
+		|| (abs(usb_info->legacy_cable) > 1)) {
+		mmi_err(chip->mmi_chip, "usb_info data illegal!\n");
+		return false;
+	}
+
+	return true;
+}
+
 #define VBUS_MIN_MV			4000
 static void glink_usb_work(struct work_struct *work)
 {
@@ -132,7 +149,7 @@ static void glink_usb_work(struct work_struct *work)
 	usb_info = chip->usb_info;
 	rc = qti_charger_get_property(OEM_PROP_USB_INFO,
 			&usb_info, sizeof(usb_info));
-	if (rc) {
+	if (rc || !glink_usb_check_usb_info(chip, &usb_info)) {
 		mmi_err(chip->mmi_chip, "Failed to read usb info, rc=%d\n", rc);
 		return;
 	}
@@ -140,7 +157,7 @@ static void glink_usb_work(struct work_struct *work)
 	if ((chip->usb_info.cid_st != -1 && usb_info.cid_st == -1) ||
 			(!chip->usb_info.lpd_st && usb_info.lpd_st)) {
 		if (!lpd_ulog_triggered && !otg_ulog_triggered)
-			bm_ulog_enable_log(true);
+			bm_ulog_enable_log(true, ULOG_DURATION_MS);
 		lpd_ulog_triggered = true;
 		mmi_err(chip->mmi_chip, "LPD: present=%d, rsbu1=%d, rsbu2=%d, cc1=%d, cc2=%d,"
 				" dp=%d, dm=%d\n",
@@ -163,7 +180,7 @@ static void glink_usb_work(struct work_struct *work)
 	} else if ((usb_info.cid_st != -1 && chip->usb_info.cid_st == -1) ||
 			(!usb_info.lpd_st && chip->usb_info.lpd_st)) {
 		if (lpd_ulog_triggered && !otg_ulog_triggered)
-			bm_ulog_enable_log(false);
+			bm_ulog_enable_log(false, 0);
 		lpd_ulog_triggered = false;
 		mmi_warn(chip->mmi_chip, "LPD: present=%d, rsbu1=%d, rsbu2=%d, cc1=%d, cc2=%d,"
 				" dp=%d, dm=%d\n",
@@ -206,12 +223,12 @@ static void glink_usb_work(struct work_struct *work)
 
 	if (usb_info.otg_st && usb_info.vbus_st < VBUS_MIN_MV) {
 		if (!otg_ulog_triggered && !lpd_ulog_triggered)
-			bm_ulog_enable_log(true);
+			bm_ulog_enable_log(true, ULOG_DURATION_MS);
 		otg_ulog_triggered = true;
 		mmi_err(chip->mmi_chip, "OTG: vbus collapse\n");
 	} else if (usb_info.otg_st) {
 		if (otg_ulog_triggered && !lpd_ulog_triggered)
-			bm_ulog_enable_log(false);
+			bm_ulog_enable_log(false, 0);
 		otg_ulog_triggered = false;
 	}
 

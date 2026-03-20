@@ -62,6 +62,8 @@
 
 #define RADIO_MAX_LEN 33
 
+#define ULOG_DURATION_MS		60000
+
 static bool debug_enabled;
 module_param(debug_enabled, bool, 0600);
 MODULE_PARM_DESC(debug_enabled, "Enable debug for qti glink charger driver");
@@ -299,6 +301,7 @@ struct qti_charger {
 
 static struct qti_charger *this_chip = NULL;
 static BLOCKING_NOTIFIER_HEAD(qti_chg_notifier_list);
+static int mmi_get_batt_cap(char *value, int size);
 
 static int find_profile_id(struct qti_charger *chg)
 {
@@ -310,10 +313,15 @@ static int find_profile_id(struct qti_charger *chg)
 		const char *id;
 		const char *sn;
 	} *map_table;
+	char profile_id_names[50] = "profile-ids-map";
+	char batt_cap[20] = {0};
 
-	count = of_property_count_strings(chg->dev->of_node, "profile-ids-map");
+	if (mmi_get_batt_cap(batt_cap, sizeof(batt_cap)) == 0)
+		snprintf(profile_id_names, sizeof(profile_id_names), "profile-ids-map-%s", batt_cap);
+
+	count = of_property_count_strings(chg->dev->of_node, profile_id_names);
 	if (count <= 0 || (count % 2)) {
-		mmi_err(chg, "Invalid profile-ids-map in DT, rc=%d\n", count);
+		mmi_err(chg, "Invalid %s in DT, rc=%d\n", profile_id_names, count);
 		return -EINVAL;
 	}
 
@@ -323,11 +331,11 @@ static int find_profile_id(struct qti_charger *chg)
 	if (!map_table)
 		return -ENOMEM;
 
-	rc = of_property_read_string_array(chg->dev->of_node, "profile-ids-map",
+	rc = of_property_read_string_array(chg->dev->of_node, profile_id_names,
 					(const char **)map_table,
 					count);
 	if (rc < 0) {
-		mmi_err(chg, "Failed to get profile-ids-map, rc=%d\n", rc);
+		mmi_err(chg, "Failed to get %s, rc=%d\n", profile_id_names, rc);
 		profile_id = rc;
 		goto free_map;
 	}
@@ -355,7 +363,7 @@ static int find_profile_id(struct qti_charger *chg)
 						map_table[i].sn);
 		}
 	} else {
-		mmi_warn(chg, "No matched profile id in profile-ids-map\n");
+		mmi_warn(chg, "No matched profile id in %s\n", profile_id_names);
 	}
 
 free_map:
@@ -877,7 +885,7 @@ static int qti_charger_get_chg_info(void *data, struct mmi_charger_info *chg_inf
 	if ((prev_cid != -1 && chg->lpd_info.lpd_cid == -1) ||
             (!prev_lpd && chg->lpd_info.lpd_present)) {
 		if (!lpd_ulog_triggered && !otg_ulog_triggered)
-			bm_ulog_enable_log(true);
+			bm_ulog_enable_log(true, ULOG_DURATION_MS);
 		lpd_ulog_triggered = true;
 		mmi_err(chg, "LPD: present=%d, rsbu1=%d, rsbu2=%d, cid=%d\n",
 			chg->lpd_info.lpd_present,
@@ -887,7 +895,7 @@ static int qti_charger_get_chg_info(void *data, struct mmi_charger_info *chg_inf
 	} else if ((chg->lpd_info.lpd_cid != -1 && prev_cid == -1) ||
 		   (!chg->lpd_info.lpd_present && prev_lpd)) {
 		if (lpd_ulog_triggered && !otg_ulog_triggered)
-			bm_ulog_enable_log(false);
+			bm_ulog_enable_log(false, 0);
 		lpd_ulog_triggered = false;
 		mmi_warn(chg, "LPD: present=%d, rsbu1=%d, rsbu2=%d, cid=%d\n",
 			chg->lpd_info.lpd_present,
@@ -904,12 +912,12 @@ static int qti_charger_get_chg_info(void *data, struct mmi_charger_info *chg_inf
 
 	if (info.chrg_otg_enabled && (info.chrg_uv < VBUS_MIN_MV * 1000)) {
 		if (!otg_ulog_triggered && !lpd_ulog_triggered)
-			bm_ulog_enable_log(true);
+			bm_ulog_enable_log(true, ULOG_DURATION_MS);
 		otg_ulog_triggered = true;
 		mmi_err(chg, "OTG: vbus collapse, vbus=%duV\n", info.chrg_uv);
 	} else if (info.chrg_otg_enabled) {
 		if (otg_ulog_triggered && !lpd_ulog_triggered)
-			bm_ulog_enable_log(false);
+			bm_ulog_enable_log(false, 0);
 		otg_ulog_triggered = false;
 	}
 
@@ -934,6 +942,7 @@ static int qti_charger_get_chg_info(void *data, struct mmi_charger_info *chg_inf
 	}
 	chg->chg_info.chrg_otg_enabled = info.chrg_otg_enabled;
 	chg->chg_info.lpd_present = chg->lpd_info.lpd_present;
+	chg->chg_info.cid_sts = chg->lpd_info.lpd_cid;
 	memcpy(chg_info, &chg->chg_info, sizeof(struct mmi_charger_info));
 
 	if (chg->wls_psy){
@@ -1746,10 +1755,15 @@ static ssize_t batt_id_show(struct device *dev,
 		const char *id;
 		const char *sn;
 	} *map_table;
+	char profile_id_names[50] = "profile-ids-map";
+	char batt_cap[20] = {0};
 
-	battsn_nums = of_property_count_strings(chg->dev->of_node, "profile-ids-map");
+	if (mmi_get_batt_cap(batt_cap, sizeof(batt_cap)) == 0)
+		snprintf(profile_id_names, sizeof(profile_id_names), "profile-ids-map-%s", batt_cap);
+
+	battsn_nums = of_property_count_strings(chg->dev->of_node, profile_id_names);
 	if (battsn_nums <= 0 || (battsn_nums % 2)) {
-		mmi_err(chg, "Invalid profile-ids-map in DT, rc=%d\n", battsn_nums);
+		mmi_err(chg, "Invalid %s in DT, rc=%d\n", profile_id_names, battsn_nums);
 		return -EINVAL;
 	}
 
@@ -1759,11 +1773,11 @@ static ssize_t batt_id_show(struct device *dev,
 	if (!map_table)
 		return -ENOMEM;
 
-	rc = of_property_read_string_array(chg->dev->of_node, "profile-ids-map",
+	rc = of_property_read_string_array(chg->dev->of_node, profile_id_names,
 					(const char **)map_table,
 					battsn_nums);
 	if (rc < 0) {
-		mmi_err(chg, "Failed to get profile-ids-map, rc=%d\n", rc);
+		mmi_err(chg, "Failed to get %s, rc=%d\n", profile_id_names, rc);
 		goto free_map;
 	}
 
@@ -1782,6 +1796,28 @@ free_map:
 }
 
 static DEVICE_ATTR_RO(batt_id);
+
+static ssize_t cur_batt_id_show(struct device *dev,
+                struct device_attribute *attr, char *buf)
+{
+	char cur_batt_id[32]={0};
+	int rc;
+	struct qti_charger *chg = dev_get_drvdata(dev);
+
+	if (!chg) {
+		pr_err("QTI: chip not valid\n");
+		return -ENODEV;
+	}
+
+	rc = qti_charger_read(chg, OEM_PROP_FG_BATTID,
+			(u32*)cur_batt_id, sizeof(cur_batt_id));
+	if (rc) {
+		pr_err("QTI: qti read fg battid failed, rc = %d\n", rc);
+	}
+	cur_batt_id[sizeof(cur_batt_id) - 1] = '\0';
+	return scnprintf(buf, CHG_SHOW_MAX_SIZE, "%s\n", cur_batt_id);
+}
+static DEVICE_ATTR(cur_batt_id, S_IRUGO, cur_batt_id_show, NULL);
 
 static ssize_t addr_store(struct device *dev,
 					   struct device_attribute *attr,
@@ -3150,6 +3186,25 @@ static const struct power_supply_desc batt_psy_desc = {
 	.set_property		= battery_psy_set_prop,
 };
 
+static int mmi_get_batt_cap(char *value, int size)
+{
+	const char *bootargs_tmp = NULL;
+	int err = -1;
+	struct device_node *n = of_find_node_by_path("/chosen");
+
+	if (n == NULL || value== NULL)
+		goto err;
+
+	if (of_property_read_string(n, "mmi,batt_cap", &bootargs_tmp) == 0) {
+		strlcpy(value, bootargs_tmp, size);
+		err = 0;
+	}
+
+	of_node_put(n);
+err:
+	return err;
+}
+
 static int mmi_get_bootarg_dt(char *key, char **value, char *prop, char *spl_flag)
 {
 	const char *bootargs_tmp = NULL;
@@ -3789,6 +3844,13 @@ static int qti_charger_init(struct qti_charger *chg)
 	}
 
 	rc = device_create_file(chg->dev,
+				&dev_attr_cur_batt_id);
+	if (rc) {
+		mmi_err(chg,
+			   "Couldn't create cur_batt_id\n");
+	}
+
+	rc = device_create_file(chg->dev,
 				&dev_attr_cid_status);
 	if (rc) {
 		mmi_err(chg,
@@ -3851,6 +3913,7 @@ static void qti_charger_deinit(struct qti_charger *chg)
 	device_remove_file(chg->dev, &dev_attr_wls_fod_curr);
 	device_remove_file(chg->dev, &dev_attr_wls_fod_gain);
 	device_remove_file(chg->dev, &dev_attr_batt_id);
+	device_remove_file(chg->dev, &dev_attr_cur_batt_id);
 	device_remove_file(chg->dev, &dev_attr_addr);
 	device_remove_file(chg->dev, &dev_attr_data);
 
@@ -3918,10 +3981,16 @@ static int qti_charger_parse_dt(struct qti_charger *chg)
 	int len;
 	u32 prev, val;
 
+	char df_sn_names[50] = "mmi,df-serialnum";
+	char batt_cap[20] = {0};
+
 	node = chg->dev->of_node;
 	dev_sn = mmi_get_battery_serialnumber();
 	if (!dev_sn) {
-		rc = of_property_read_string(node, "mmi,df-serialnum",
+		if (mmi_get_batt_cap(batt_cap, sizeof(batt_cap)) == 0)
+			snprintf(df_sn_names, sizeof(df_sn_names), "mmi,df-serialnum-%s", batt_cap);
+
+		rc = of_property_read_string(node, df_sn_names,
 						&df_sn);
 		if (!rc && df_sn) {
 			mmi_info(chg, "Default Serial Number %s\n", df_sn);

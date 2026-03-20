@@ -90,11 +90,17 @@ struct mmi_charger_info {
 	int wls_online;
 	int wls_tx_enabled;
 	int icm_sm_st;
+	int chrg_stat;
+};
+
+struct mmi_pmic_info {
+	int pmic_vph_uv;
 	int pmic_vbatt_uv;
 	int pmic_ibatt_ua;
 	int aicl_result_ma;
+	int icl_result_ma;
 	int vfloat_mv;
-	int chrg_stat;
+	int pmic_suspend_st;
 };
 
 #define MMI_VOTE_NUM_MAX 32
@@ -174,6 +180,7 @@ struct mmi_glink_chip {
 	struct battery_host *batt_host;
 
 	struct mmi_charger_info charger_info;
+	struct mmi_pmic_info pmic_info;
 	struct mmi_charger_status charger_status;
 	struct mmi_charger_constraint charger_constraint;
 	struct battery_info battery_info;
@@ -192,6 +199,7 @@ struct mmi_glink_chip {
 	bool			factory_kill_armed;
 	bool			force_charger_disabled;
 	bool			force_charging_enabled;
+	bool			force_chrg_disabled_batt_err;
 	bool			is_softbank;
 
 	bool			charging_disable;
@@ -232,6 +240,8 @@ struct mmi_glink_chip {
 
 	int			heartbeat_dischg_ms;
 	uint32_t		ibat_calc_alignment_time;
+	bool			charger_present_dynamic_control_bm_ulog;
+	bool			bm_ulog_enabled;
 };
 
 struct encrypted_data {

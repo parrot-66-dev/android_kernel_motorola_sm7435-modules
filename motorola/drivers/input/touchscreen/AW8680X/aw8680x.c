@@ -60,7 +60,7 @@ struct aw8680x *g_aw8680x;
 static char *aw8680x_flash_app_bin = "aw8680x_flash_app.bin";
 static char *aw8680x_flash_boot_bin = "aw8680x_flash_boot.bin";
 static char *aw8680x_sram_bin = "aw8680x_sram.bin";
-uint8_t use_ndt_aw8680x = 1;
+int use_ndt_aw8680x = 0;
 EXPORT_SYMBOL_GPL(use_ndt_aw8680x);
 
 static int32_t aw8680x_file_open(struct inode *inode, struct file *filp);
@@ -209,6 +209,7 @@ static int32_t aw8680x_register_i2c_writes(struct aw8680x *p_aw8680x,
 	int32_t ret = DATA_INIT;
 	uint8_t *data = NULL;
 	int32_t cnt = 0;
+	int status = 0;
 
 	mutex_lock(&(p_aw8680x->aw8680x_i2c_mutex));
 	data = kmalloc(len + 1, GFP_KERNEL);
@@ -220,14 +221,17 @@ static int32_t aw8680x_register_i2c_writes(struct aw8680x *p_aw8680x,
 	data[0] = reg_addr;
 	memcpy(&data[1], buf, len);
 
-	while (cnt < 3) {
+	while (cnt < 5) {
 		ret = i2c_master_send(p_aw8680x->i2c, data, len + 1);
-		if (ret < 0)
-			AWLOGE("register i2c write error cnt: %d", cnt);
-		else
+		if (ret < 0) {
+			status = gpio_get_value_cansleep(p_aw8680x->state_gpio);
+			AWLOGE("register i2c write error cnt: %d, state_gpio = %d", cnt, status);
+		}
+		else {
 			break;
-
+		}
 		cnt++;
+		mdelay(5);
 	}
 
 	mutex_unlock(&(p_aw8680x->aw8680x_i2c_mutex));
@@ -3111,7 +3115,7 @@ static ssize_t force_mode_store(struct device *dev,
 					const char *buf, size_t count)
 {
 	uint32_t data_buf = 0;
-    int32_t jump_count = 3;
+	int32_t jump_count = 3;
 	int ret = -1;
 
 	ret = kstrtouint(buf, 0, &data_buf);
@@ -3129,7 +3133,7 @@ static ssize_t force_mode_store(struct device *dev,
 	if (data_buf == 0) {
 		AWLOGI("Disable force work mode");
 		g_aw8680x->flash_app_states = false;
-		gpio_set_value_cansleep(g_aw8680x->reset_gpio, HIGH_LEVEL);
+		gpio_set_value_cansleep(g_aw8680x->reset_gpio, HIGH_LEVEL);  //disable
 		udelay(150);
 		//platform close ldo power and delay sometime until power stability
 		msleep(2);
@@ -3138,28 +3142,48 @@ static ssize_t force_mode_store(struct device *dev,
 		g_aw8680x->flash_app_states = false;
 		//platform open ldo power and delay sometime until power stability
 		msleep(2);
-		aw8680x_hw_reset(g_aw8680x);
-		aw8680x_stay_boot(g_aw8680x);
-		while (jump_count--) {
-				mdelay(FLASH_BOOT_INIT_TIME);
-				ret = aw8680x_jump_flash_app(g_aw8680x, FLASH_APP_BASE_ADDR);
-				if (ret == AW_SUCCESS) {
-					AWLOGI("jump flash app OK!!");
-					mdelay(FLASH_APP_VERSION_GET_TIME);
-					ret = aw8680x_flash_app_version_in_soc_get(g_aw8680x);
-					if (ret != AW_SUCCESS) {
-						AWLOGI("flash app version readback retry jump_count = %d", jump_count);
+
+		do {
+			ret = aw8680x_jump_boot(g_aw8680x);
+			if (ret == AW_SUCCESS)
+				AWLOGI("jump boot success!!");
+			else
+				AWLOGI("jump boot failed!!");
+			mdelay(FLASH_BOOT_INIT_TIME);
+			ret = aw8680x_jump_flash_app(g_aw8680x, FLASH_APP_BASE_ADDR);
+			if (ret == AW_SUCCESS) {
+				AWLOGI("jump flash app OK!!");
+				mdelay(FLASH_APP_VERSION_GET_TIME);
+				ret = aw8680x_flash_app_version_in_soc_get(g_aw8680x);
+				if (ret != AW_SUCCESS) {
+					AWLOGI("flash app version readback retry jump_count = %d", jump_count);
+				} else {
+					if (g_aw8680x->flash_app_version_in_bin == g_aw8680x->flash_app_version_in_soc) {
+						g_aw8680x->flash_app_states = true;
+						AWLOGI("flash app version readback  check PASS!!");
+						return count;
 					} else {
-						if (g_aw8680x->flash_app_version_in_bin == g_aw8680x->flash_app_version_in_soc) {
-					        g_aw8680x->flash_app_states = true;
-							AWLOGI("flash app version readback  check PASS!!");
-							return count;
-						} else {
-							AWLOGI("flash app version check retry jump_count = %d", jump_count);
-						}
+						AWLOGI("flash app version check retry jump_count = %d", jump_count);
 					}
 				}
-		}
+			} else {
+				ret = aw8680x_connect(g_aw8680x);
+				if (ret != AW_SUCCESS) {
+					AWLOGE("connect failed!!! ret is : %d", ret);
+				} else {
+					AWLOGI("pc location is 0x%08x", g_aw8680x->pc_location);
+					if (g_aw8680x->pc_location == PC_POINT_ROM_BOOT) {
+						AWLOGI("pc location is rom boot!");
+						return count;
+					} else if (g_aw8680x->pc_location == PC_POINT_FLASH_BOOT) {
+						AWLOGI("pc location is flash boot!");
+						return count;
+					}
+				}
+				AWLOGE("pc location is  0x%08x", g_aw8680x->pc_location);
+			}
+			jump_count--;
+		} while ( jump_count>=0);
 		AWLOGE("flash app version readback or check Failed, so jump flash app failed!!");
 		return -EFAULT;
 	} else if(data_buf == 2) {
@@ -3208,6 +3232,24 @@ static ssize_t ndt_reg_dump_show(struct device *dev,
 	return len;
 }
 
+static ssize_t vendor_name_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	ssize_t len = 0;
+	int ret = -1;
+
+	if (use_ndt_aw8680x == 1) {
+		ret = snprintf(buf + len, PAGE_SIZE - len, "%s\n", "ndt_aw8680x");
+	} else if (use_ndt_aw8680x == 2) {
+		ret = snprintf(buf + len, PAGE_SIZE - len, "%s\n", "rakuraku_cypsoc");
+	} else {
+		ret = snprintf(buf + len, PAGE_SIZE - len, "%s\n", "press_sensor_null");
+	}
+
+	return ret;
+}
+
+static DEVICE_ATTR_RO(vendor_name);
 static DEVICE_ATTR_RO(ndt_reg_dump);
 static DEVICE_ATTR_RW(ndt_restore_coeff);
 static DEVICE_ATTR_WO(ndt_tp);
@@ -3281,6 +3323,15 @@ static struct attribute *aw8680x_attributes[] = {
 
 static struct attribute_group aw8680x_attribute_group = {
 	.attrs = aw8680x_attributes
+};
+
+static struct attribute *aw8680x_attributes_first[] = {
+	&dev_attr_vendor_name.attr,
+	NULL
+};
+
+static struct attribute_group aw8680x_attribute_group_first = {
+	.attrs = aw8680x_attributes_first
 };
 
 static ssize_t proc_reg_read(struct file *filp, char __user *buf,
@@ -4533,7 +4584,7 @@ static int init_vibrator_proc(struct aw8680x *p_aw8680x)
 }
 
 
-static int sysclass_group_register(struct aw8680x *p_aw8680x)
+static int sysclass_group_register_first(struct aw8680x *p_aw8680x)
 {
 	int ret = DATA_INIT;
 
@@ -4542,7 +4593,7 @@ static int sysclass_group_register(struct aw8680x *p_aw8680x)
 		return -ENOMEM;
 	}
 
-	p_aw8680x->sysfs_class = class_create(THIS_MODULE, "aw_press");
+	p_aw8680x->sysfs_class = class_create(THIS_MODULE, "press");
 	if(!p_aw8680x->sysfs_class){
 		AWLOGE("sysfs_class could not be created\n");
 		ret = -ENOMEM;
@@ -4561,6 +4612,55 @@ static int sysclass_group_register(struct aw8680x *p_aw8680x)
 			AWLOGI("sysfs_dev have be created");
 		}
 	}
+	if(!ret){
+		ret = sysfs_create_group(&(p_aw8680x->sysfs_dev->kobj), &aw8680x_attribute_group_first);
+		if(ret) {
+			AWLOGE("sysfs group first could not be created\n");
+			ret = -ENOMEM;
+			device_destroy(p_aw8680x->sysfs_class, 0);
+			p_aw8680x->sysfs_dev = NULL;
+			class_destroy(p_aw8680x->sysfs_class);
+			p_aw8680x->sysfs_class = NULL;
+		}else {
+			AWLOGI("sysfs_create first have be created");
+			p_aw8680x->sysclass_register = true;
+		}
+	}
+
+	return DATA_INIT;
+}
+
+static int sysclass_group_register(struct aw8680x *p_aw8680x)
+{
+	int ret = DATA_INIT;
+
+	if (!p_aw8680x){
+		AWLOGE("Error: p_aw8680x is NULL\n");
+		return -ENOMEM;
+	}
+
+	if (p_aw8680x->sysclass_register != true) {
+		p_aw8680x->sysfs_class = class_create(THIS_MODULE, "press");
+		if(!p_aw8680x->sysfs_class){
+			AWLOGE("sysfs_class could not be created\n");
+			ret = -ENOMEM;
+		} else {
+			AWLOGI("sysfs_class have be created");
+		}
+
+		if(!ret){
+			p_aw8680x->sysfs_dev = device_create(p_aw8680x->sysfs_class, NULL, 0, p_aw8680x, "force_dev");
+			if(!p_aw8680x->sysfs_dev){
+				AWLOGE("sysfs_dev could not be created\n");
+				ret = -ENOMEM;
+				class_destroy(p_aw8680x->sysfs_class);
+				p_aw8680x->sysfs_class = NULL;
+			} else {
+				AWLOGI("sysfs_dev have be created");
+			}
+		}
+	}
+
 	if(!ret){
 		ret = sysfs_create_group(&(p_aw8680x->sysfs_dev->kobj), &aw8680x_attribute_group);
 		if(ret) {
@@ -5058,6 +5158,7 @@ static void aw8680x_struct_init(struct aw8680x *p_aw8680x, struct i2c_client *i2
 	p_aw8680x->update_mutex_flag = true;
 	p_aw8680x->flash_app_states = false;
 	p_aw8680x->flash_boot_states = false;
+	p_aw8680x->sysclass_register = false;
 }
 
 static int32_t aw8680x_input_init(struct aw8680x *p_aw8680x)
@@ -5160,12 +5261,20 @@ aw8680x_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
 	}
 	mutex_init(&(p_aw8680x->aw8680x_i2c_mutex));
 
+	ret = sysclass_group_register_first(p_aw8680x);
+	if (ret != DATA_INIT) {
+		AWLOGE("sysclass register first fail");
+		goto err_chipid;
+	}
+
 	ret = aw8680x_read_chipid(p_aw8680x);
 	if (ret != DATA_INIT) {
 		AWLOGE("the ic not AW8680X");
-		use_ndt_aw8680x = 0;
+		use_ndt_aw8680x = -1;
 		goto err_chipid;
 	}
+
+	use_ndt_aw8680x = 1;
 
 	ret = aw8680x_input_init(p_aw8680x);
 	if (ret == -INPUT_ALLOC_ERR)

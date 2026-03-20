@@ -149,6 +149,9 @@ enum oem_property_type {
 	OEM_PROP_MSC_SLAVE_MANUAL_MODE,
 	OEM_PROP_MSC_MASTER_OVPGATE_EN,
 	OEM_PROP_MSC_SLAVE_OVPGATE_EN,
+	OEM_PROP_WLS_MC_EN,
+	OEM_PROP_PMIC_INFO,
+	OEM_PROP_TCMD_CURRENT_BATTID, // add prop to get current battid from adsp-fg
 	OEM_PROP_MAX,
 };
 

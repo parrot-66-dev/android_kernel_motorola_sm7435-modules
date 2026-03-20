@@ -81,12 +81,14 @@ struct mmi_charger_info {
 	int chrg_present;
 	bool chrg_otg_enabled;
 	int lpd_present;
+	int cid_sts;
 	int vbus_present;
 };
 
 struct mmi_charger_cfg {
 	int target_fcc;
 	int target_fv;
+	int max_fv;
 	int fg_iterm;
 	int chrg_iterm;
 	bool full_charged;

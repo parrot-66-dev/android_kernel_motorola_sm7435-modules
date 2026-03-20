@@ -85,7 +85,9 @@
 #define CW2217_PROFILE_NEED_UPDATE 3
 
 #define CW_BPD_TEMP (-400)
+#define CHG_SHOW_MAX_SIZE 50
 
+#define CWFG_ENABLE_LOG  1
 #define cw_printk(fmt, arg...)                                                 \
 	{                                                                          \
 		if (CWFG_ENABLE_LOG)                                                   \
@@ -138,7 +140,7 @@ struct cw_battery {
 	int  soh;
 	int  fw_version;
 	int  fcc_design;
-	int  fcc;
+	int  fcc_uah;
 	int  ui_full;
 	int  ntc_exist;
 	int  batt_status;
@@ -151,6 +153,16 @@ struct cw_battery {
 	int ibat_polority;
 	const char *bms_name;
 	struct regulator *vdd_i2c_vreg;
+};
+
+enum {
+	EVENT_TYPE_FLIP_SOC = 0,
+	EVENT_TYPE_FLIP_VOL_NOW,
+	EVENT_TYPE_FLIP_TEMP,
+	EVENT_TYPE_FLIP_CYCLE,
+	EVENT_TYPE_FLIP_CHG_FULL,
+	EVENT_TYPE_FLIP_SOH,
+	EVENT_TYPE_FLIP_COUNT
 };
 
 /* CW2217 iic read function */
@@ -720,6 +732,18 @@ static int cw_get_fw_version(struct cw_battery *cw_bat)
 	return 0;
 }
 
+static unsigned int cw_get_charge_counter(struct cw_battery *cw_bat)
+{
+	int charge_counter;
+	int full_capacity;
+
+	full_capacity = (cw_bat->fcc_design * cw_bat->soh * 1000) / 100;
+	charge_counter = div_s64(full_capacity * cw_bat->ui_soc, 100);
+	cw_bat->fcc_uah = full_capacity;
+
+	return charge_counter;
+}
+
 static int cw_update_data(struct cw_battery *cw_bat)
 {
 	int ret = 0;
@@ -730,8 +754,9 @@ static int cw_update_data(struct cw_battery *cw_bat)
 	ret += cw_get_current(cw_bat);
 	ret += cw_get_cycle_count(cw_bat);
 	ret += cw_get_soh(cw_bat);
-	cw_printk("vol = %d  current = %ld cap = %d temp = %d raw_soc = %d age=%d\n",
-		cw_bat->voltage, cw_bat->cw_current, cw_bat->ui_soc, cw_bat->temp, cw_bat->raw_soc, cw_bat->soh);
+	ret += cw_get_charge_counter(cw_bat);
+	cw_printk("vol = %d  current = %ld cap = %d temp = %d raw_soc = %d age=%d, cycle = %d\n",
+		cw_bat->voltage, cw_bat->cw_current, cw_bat->ui_soc, cw_bat->temp, cw_bat->raw_soc, cw_bat->soh, cw_bat->cycle);
 
 	return ret;
 }
@@ -863,6 +888,94 @@ static int cw_init(struct cw_battery *cw_bat)
 	cw_printk("cw2217 init success!\n");
 
 	return 0;
+}
+
+typedef struct {
+	const char *name;
+	int value;
+} uEnvpVar;
+
+static void battery_notify_flip_uevent(struct cw_battery *cw_bat)
+{
+	struct power_supply *batt_psy = NULL;
+	int num_vars = 0, i = 0;
+	char **uenvp_ext = NULL;
+	char *uenvp_strings = NULL;
+	uEnvpVar uenvp_vars[EVENT_TYPE_FLIP_COUNT] = {0};
+
+	if (!cw_bat) {
+		cw_info("cw_bat is illegal\n");
+		return;
+	}
+
+	batt_psy = cw_bat->batt_psy;
+	if (!batt_psy) {
+		cw_info("No battery supply found\n");
+		return;
+	}
+
+	uenvp_vars[EVENT_TYPE_FLIP_SOC] = (uEnvpVar){"POWER_SUPPLY_FLIP_BATT_SOC", cw_bat->ui_soc};
+	uenvp_vars[EVENT_TYPE_FLIP_VOL_NOW] = (uEnvpVar){"POWER_SUPPLY_FLIP_VOLTAGE_NOW", cw_bat->voltage * CW_VOL_UNIT};
+	uenvp_vars[EVENT_TYPE_FLIP_TEMP] = (uEnvpVar){"POWER_SUPPLY_FLIP_TEMP", cw_bat->temp};
+	uenvp_vars[EVENT_TYPE_FLIP_CYCLE] = (uEnvpVar){"POWER_SUPPLY_FLIP_CYCLE_COUNT", cw_bat->cycle};
+	uenvp_vars[EVENT_TYPE_FLIP_CHG_FULL] = (uEnvpVar){"POWER_SUPPLY_FLIP_CHARGE_FULL", cw_bat->fcc_uah};
+	uenvp_vars[EVENT_TYPE_FLIP_SOH] = (uEnvpVar){"POWER_SUPPLY_FLIP_STATE_OF_HEALTH", cw_bat->soh};
+
+	num_vars = EVENT_TYPE_FLIP_COUNT;
+
+	uenvp_ext = kmalloc((num_vars + 1) * sizeof(char *), GFP_KERNEL);
+	if (!uenvp_ext) {
+		cw_info("Failed to kmalloc the uenvp_ext\n");
+		return;
+	}
+
+	uenvp_strings = kmalloc(CHG_SHOW_MAX_SIZE * num_vars, GFP_KERNEL);
+	if (!uenvp_strings) {
+		cw_info("Failed to kmalloc the event string\n");
+		kfree(uenvp_ext);
+		return;
+	}
+
+	for (i = 0; i < num_vars; i++) {
+		uenvp_ext[i] = uenvp_strings + i * CHG_SHOW_MAX_SIZE;
+		scnprintf(uenvp_ext[i], CHG_SHOW_MAX_SIZE, "%s=%d", uenvp_vars[i].name, uenvp_vars[i].value);
+	}
+	uenvp_ext[num_vars] = NULL;
+	kobject_uevent_env(&batt_psy->dev.kobj, KOBJ_CHANGE, uenvp_ext);
+
+	if (uenvp_strings) {
+		kfree(uenvp_strings);
+	}
+
+	if (uenvp_ext) {
+		kfree(uenvp_ext);
+	}
+
+	return;
+}
+
+static void battery_notify_charger_uevent(struct cw_battery *cw_bat)
+{
+	int ui_soc, ret = 0;
+	ui_soc = cw_bat->ui_soc;
+	ret = cw_update_data(cw_bat);
+	if (ret < 0) {
+		printk(KERN_ERR "iic read error when update data");
+		return;
+	}
+
+	if (!cw_bat->batt_psy) {
+		cw_bat->batt_psy = power_supply_get_by_name("battery");
+		if (!cw_bat->batt_psy) {
+			cw_printk("%s: get batt_psy fail\n", __func__);
+			return;
+		}
+	}
+	if (cw_bat->batt_psy && ui_soc != cw_bat->ui_soc) {
+		battery_notify_flip_uevent(cw_bat);
+	}
+
+	return;
 }
 
 static void cw_bat_work(struct work_struct *work)
@@ -1106,17 +1219,6 @@ static int cw_battery_set_property(struct power_supply *psy,
 	return ret;
 }
 
-static unsigned int cw_get_charge_counter(struct cw_battery *cw_bat)
-{
-	int charge_counter;
-	int full_capacity;
-
-	full_capacity = (cw_bat->fcc_design * cw_bat->soh * 1000) / 100;
-	charge_counter = div_s64(full_capacity * cw_bat->ui_soc, 100);
-
-	return charge_counter;
-}
-
 static int cw_battery_get_property(struct power_supply *psy,
 				enum power_supply_property psp,
 				union power_supply_propval *val)
@@ -1141,6 +1243,7 @@ static int cw_battery_get_property(struct power_supply *psy,
 		val->intval = cw_bat->cycle;
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
+		battery_notify_charger_uevent(cw_bat);
 		cw_get_capacity(cw_bat);
 		val->intval = cw_bat->ui_soc;
 		break;

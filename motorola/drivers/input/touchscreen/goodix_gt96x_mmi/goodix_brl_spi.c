@@ -17,6 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/spi/spi.h>
+#include <linux/mmi_device.h>
 
 #include "goodix_ts_core.h"
 #define TS_DRIVER_NAME		"gtx8_spi"
@@ -76,7 +77,17 @@ static int goodix_spi_read_bra(struct device *dev, unsigned int addr,
 	xfers.len = SPI_READ_PREFIX_LEN + len;
 	xfers.cs_change = 0;
 	spi_message_add_tail(&xfers, &spi_msg);
+
+#ifdef CONFIG_GTP_MANUAL_CS
+	gpio_set_value(cs_gpio, 0);
+#endif
+
 	ret = spi_sync(spi, &spi_msg);
+
+#ifdef CONFIG_GTP_MANUAL_CS
+	gpio_set_value(cs_gpio, 1);
+#endif
+
 	if (ret < 0) {
 		ts_err("spi transfer error:%d", ret);
 		goto exit;
@@ -125,7 +136,17 @@ static int goodix_spi_read(struct device *dev, unsigned int addr,
 	xfers.len = SPI_READ_PREFIX_LEN - 1 + len;
 	xfers.cs_change = 0;
 	spi_message_add_tail(&xfers, &spi_msg);
+
+#ifdef CONFIG_GTP_MANUAL_CS
+	gpio_set_value(cs_gpio, 0);
+#endif
+
 	ret = spi_sync(spi, &spi_msg);
+
+#ifdef CONFIG_GTP_MANUAL_CS
+	gpio_set_value(cs_gpio, 1);
+#endif
+
 	if (ret < 0) {
 		ts_err("spi transfer error:%d", ret);
 		goto exit;
@@ -172,7 +193,17 @@ static int goodix_spi_write(struct device *dev, unsigned int addr,
 	xfers.len = SPI_WRITE_PREFIX_LEN + len;
 	xfers.cs_change = 0;
 	spi_message_add_tail(&xfers, &spi_msg);
+
+#ifdef CONFIG_GTP_MANUAL_CS
+	gpio_set_value(cs_gpio, 0);
+#endif
+
 	ret = spi_sync(spi, &spi_msg);
+
+#ifdef CONFIG_GTP_MANUAL_CS
+	gpio_set_value(cs_gpio, 1);
+#endif
+
 	if (ret < 0)
 		ts_err("spi transfer error:%d", ret);
 
@@ -186,6 +217,10 @@ static int goodix_spi_probe(struct spi_device *spi)
 	int ret = 0;
 
 	ts_info("goodix spi probe in");
+	if (spi->dev.of_node && !mmi_device_is_available(spi->dev.of_node)) {
+		ts_err("%s mmi: device not supported\n", __func__);
+		return -ENODEV;
+	}
 
 	/* init spi_device */
 	spi->mode            = SPI_MODE_0;

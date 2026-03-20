@@ -35,6 +35,9 @@
 #include <linux/i2c.h>
 #include <linux/version.h>
 
+#ifdef NDT_DATA_EN
+extern int use_ndt_aw8680x;
+#endif
 
 #define CONFIG_TOUCHSCREEN_PARADE_DEVICETREE_SUPPORT
 
@@ -151,6 +154,20 @@ static int pt_cypsoc_picoleaf_i2c_probe(struct i2c_client *client, const struct 
 	struct cypsoc_picoleaf_data *cpd;
 	int rc = 0;
 
+	pr_info("%s: probe enter, use_ndt_aw8680x = %d\n", __func__, use_ndt_aw8680x);
+
+#ifdef NDT_DATA_EN
+	if (use_ndt_aw8680x == 0) { //0 means second pressure sensor read id not compleated.
+		usleep_range(50000, 60000);
+		return -EPROBE_DEFER;
+	}
+
+	if (use_ndt_aw8680x == 1) {
+		pr_info("%s: use_ndt_aw8680x is 1, picoleaf probe direct exit\n", __func__);
+		return 0;
+	}
+#endif
+
 	if (!strncmp(i2c_id->name, CYPSOC_PICOLEAF_NAME, strlen(CYPSOC_PICOLEAF_NAME))){
 		rc = cypsoc_picoleaf_probe(client, i2c_id);
 		if(rc) {
@@ -171,10 +188,21 @@ static int pt_cypsoc_picoleaf_i2c_probe(struct i2c_client *client, const struct 
 			//cpd->vdd_gpio = cd->cpdata->pico_vdd_gpio;
 			//cpd->vref_gpio = cd->cpdata->pico_vref_gpio;
 			//if(cd->core_probe_complete == 1) {
-			cypsoc_picoleaf_i2c_readied(cpd);
+			rc = cypsoc_picoleaf_i2c_readied(cpd);
+			if (rc < 0) {
+				return -EPROBE_DEFER;
+			}
+
+			cpd->probe_readid_not_esd_reset = 0;
+			//create sys node
+			cypsoc_picoleaf_sysclass_group_register(cpd);
 
 			i2c_clients_pt_cypsoc[1] = client;
 			cypsoc_picoleaf_firmware_update(cpd);
+#ifdef NDT_DATA_EN
+			use_ndt_aw8680x = 2;
+#endif
+			pr_info("%s: probe completed\n", __func__);
 	}else{
 		pr_err("%s: NAME ERROR!!\n", __func__);
 	}
@@ -204,7 +232,7 @@ static struct i2c_driver pt_i2c_driver = {
 	.driver = {
 		.name = PT_I2C_NAME,
 		.owner = THIS_MODULE,
-		.pm = &pt_pm_ops,
+		//.pm = &pt_pm_ops,
 #ifdef CONFIG_TOUCHSCREEN_PARADE_DEVICETREE_SUPPORT
 		.of_match_table = pt_i2c_of_match,
 #endif

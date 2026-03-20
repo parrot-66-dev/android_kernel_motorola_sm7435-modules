@@ -1,6 +1,8 @@
 #include "aw_sar_chip_interface.h"
 #include "aw_sar.h"
-
+#ifdef CONFIG_CAPSENSE_HALL_CAL
+#include <linux/phone_case_detection_notify.h>
+#endif
 #define AW_SAR_I2C_NAME		"awinic_sar"
 #define AW_SAR_DRIVER_VERSION	"v0.1.5.14"
 #define USB_POWER_SUPPLY_NAME   "usb"
@@ -581,7 +583,11 @@ int32_t aw_sar_soft_reset(struct aw_sar *p_sar)
 		return p_sar->p_sar_para->p_soft_rst->p_soft_reset_fn(p_sar);
 	}
 
-	return aw_sar_soft_reset_func(p_sar->i2c,  p_sar->p_sar_para->p_soft_rst);
+	if (p_sar->p_sar_para->p_soft_rst != NULL) {
+		return aw_sar_soft_reset_func(p_sar->i2c,  p_sar->p_sar_para->p_soft_rst);
+	}
+
+	return -AW_ERR;
 }
 
 static int32_t aw_sar_check_chipid(struct aw_sar *p_sar)
@@ -1752,19 +1758,19 @@ static int aw_sar_ps_notify_callback(struct notifier_block *self,
 		AWLOGE(p_sar->dev, "ps notification: event = %lu", event);
 		retval = aw_sar_ps_get_state(p_sar, psy, &present);
 		if (retval) {
-			AWLOGE(p_sar->dev, "psy get property failed");
-			return retval;
+			AWLOGE(p_sar->dev, "psy get property failed,ret=%d", retval);
+			return NOTIFY_DONE;
 		}
 		if (event == PSY_EVENT_PROP_CHANGED) {
 			if (p_sar->ps_is_present == present) {
 				AWLOGE(p_sar->dev, "ps present state not change");
-				return 0;
+				return NOTIFY_DONE;
 			}
 		}
 		p_sar->ps_is_present = present;
 		schedule_work(&p_sar->ps_notify_work);
 	}
-	return 0;
+	return NOTIFY_DONE;
 }
 
 static int aw_sar_ps_notify_init(struct aw_sar *p_sar)
@@ -1796,6 +1802,57 @@ free_ps_notifier:
 }
 // AW_SAR_USB_PLUG_CAIL end
 
+#ifdef CONFIG_CAPSENSE_HALL_CAL
+static void aw_sar_hall_notify_callback_work(struct work_struct *work)
+{
+    struct aw_sar *p_sar = container_of(work, struct aw_sar, hall_notify_work.work);
+
+    AWLOGD(p_sar->dev, "enter");
+
+    aw_sar_aot(p_sar);
+}
+
+static int aw_sar_hall_notify_callback(struct notifier_block *self,
+        unsigned long event, void *p)
+{
+    struct aw_sar *p_sar = container_of(self, struct aw_sar, hall_notif);
+    int present;
+
+    present = event;
+    AWLOGD(p_sar->dev,"hall_detection_notifier_callback,present=%d\n",present);
+    if (p_sar->hall_is_present != present) {
+        p_sar->hall_is_present = present;
+        AWLOGI(p_sar->dev,"hall_is_present=%d\n",p_sar->hall_is_present);
+		/* Delay calibration by 1 second (HZ) to debounce rapid attach/detach events from the Hall sensor. */
+        schedule_delayed_work(&p_sar->hall_notify_work, HZ);
+    } else {
+        AWLOGD(p_sar->dev,"hall present state not change\n");
+    }
+
+    return 0;
+}
+
+static int aw_sar_hall_notify_init(struct aw_sar *p_sar)
+{
+    int ret = 0;
+
+    INIT_DELAYED_WORK(&p_sar->hall_notify_work, aw_sar_hall_notify_callback_work);
+    p_sar->hall_notif.notifier_call = (notifier_fn_t)aw_sar_hall_notify_callback;
+    ret = phone_case_detection_register_client(&p_sar->hall_notif);
+    if (ret)
+        AWLOGE(p_sar->dev,"Unable to register hall_nb: %d\n", ret);
+    ret = phone_case_detection_get_hall_state();
+    if (ret < 0) {
+        AWLOGE(p_sar->dev,"hall not enabled rc=%d\n", ret);
+        phone_case_detection_unregister_client(&p_sar->hall_notif);
+    } else {
+        p_sar->hall_is_present = ret;
+        AWLOGI(p_sar->dev,"hall_notify_init:hall_is_present=%d\n",p_sar->hall_is_present);
+    }
+
+	return AW_OK;
+}
+#endif
 
 static int32_t aw_sar_platform_rsc_init(struct aw_sar *p_sar)
 {
@@ -1823,6 +1880,13 @@ static int32_t aw_sar_platform_rsc_init(struct aw_sar *p_sar)
 			goto free_usb_plug_cail;
 		}
 	}
+
+#ifdef CONFIG_CAPSENSE_HALL_CAL
+    ret = aw_sar_hall_notify_init(p_sar);
+    if (ret < 0) {
+        AWLOGE(p_sar->dev, "error creating hall notify");
+    }
+#endif
 
 	//The interrupt pin is set to internal pull-up and configured by DTS
 	if (p_sar->dts_info.use_inter_pull_up == true) {
@@ -2154,6 +2218,7 @@ static int aw_sar_suspend(struct device *dev)
 			return 0;
 		}
 		aw_sar_mode_set(p_sar, p_sar->p_sar_para->p_platform_config->p_pm_chip_mode->suspend_set_mode);
+		aw_sar_disable_irq(p_sar);
 	}
 	/*wxm add start by 2023/12/5*/
 	if(p_sar->dts_info.monitor_esd_flag){
@@ -2179,6 +2244,7 @@ static int aw_sar_resume(struct device *dev)
 			p_sar->p_sar_para->p_platform_config->p_pm_chip_mode->p_resume_fn(p_sar);
 			return 0;
 		}
+		aw_sar_enable_irq(p_sar);
 		aw_sar_mode_set(p_sar, p_sar->p_sar_para->p_platform_config->p_pm_chip_mode->resume_set_mode);
 	}
 	/*wxm add start by 2023/12/5*/
