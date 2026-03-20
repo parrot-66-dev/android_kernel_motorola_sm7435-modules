@@ -283,10 +283,16 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 		(panel->bl_config.bl_level && !bl_lvl) ||
 		(nowtimejiffies - lasttimejiffies) > 500 ||
 		lastTrend != curTrend) {
+		if (bl_lvl > 0) {
+			panel->bl_config.aod_bl_level = panel->bl_config.bl_level;
+		}
 		pr_info("set_backlight from %u to %u, Trend[cur:last=%d:%d], max[bl:brightness:thermal=%d:%d:%lu], for %s\n",
 		        (u32)(panel->bl_config.bl_level), (u32)bl_lvl, curTrend, lastTrend, panel->bl_config.bl_max_level,
 		        panel->bl_config.brightness_max_level, c_conn->thermal_max_brightness, panel->name);
 		lasttimejiffies = nowtimejiffies;
+	}
+	if (panel->bl_config.bl_level == 0 && bl_lvl > 0) {
+		panel->bl_config.aod_bl_level = bl_lvl;
 	}
 	lastTrend = curTrend;
 
@@ -820,6 +826,10 @@ void dsi_display_set_cmd_tx_ctrl_flags(struct dsi_display *display,
 				flags |= DSI_CTRL_CMD_ASYNC_WAIT;
 		if (msg->flags & MIPI_DSI_MSG_ASYNC_OVERRIDE)
 				flags |= DSI_CTRL_CMD_ASYNC_WAIT;
+
+		if (display->panel->panel_mode == DSI_OP_VIDEO_MODE && !display->enabled &&
+			(flags & DSI_CTRL_CMD_ASYNC_WAIT))
+			flags &= ~DSI_CTRL_CMD_CUSTOM_DMA_SCHED;
 	}
 
 	cmd->ctrl_flags |= flags;
@@ -1069,6 +1079,11 @@ int dsi_display_check_status(struct drm_connector *connector, void *display,
 	if(dsi_display->display_idx == 1 && !panel->esd_first_check){
 		DSI_INFO("cli panel ignore esd check\n");
 		panel->esd_first_check = true;
+		return true;
+	}
+
+       if (panel->panel_trueaod_state) {
+		DSI_INFO("panel AOD LP1 ignore esd check\n");
 		return true;
 	}
 
@@ -1838,6 +1853,12 @@ int dsi_display_set_power(struct drm_connector *connector,
 	if (!display || !display->panel) {
 		DSI_ERR("invalid display/panel\n");
 		return -EINVAL;
+	}
+
+	if (display->panel->pcd_config.pcd_reg_enabled
+			&& (SDE_MODE_DPMS_ON == power_mode)) {
+		display->panel->pcd_config.check_seq_count++;
+		dsi_panel_check_pcd_read_flag(display->panel);
 	}
 
 	switch (power_mode) {
@@ -6837,7 +6858,7 @@ static ssize_t panelPcdCheck_store(struct device *device,
 	if (res < 0)
 		return res;
 	if(dsi_display->panel->bl_config.bl_level > 0 && dsi_display->panel->check_pcd)
-		set_panelpcdcheck_enable(dsi_display->panel);
+		set_panelpcdcheck_enable(dsi_display->panel, dsi_display->panel->panelPcdCheck_enable);
 
 	printk("%d dsi_display->panel->check_pcd = %d\n", dsi_display->panel->panelPcdCheck_enable,dsi_display->panel->check_pcd);
 	return count;
@@ -6865,6 +6886,67 @@ static ssize_t panelPcdCheck_show(struct device *device,
 	    return scnprintf(buf, PAGE_SIZE, "%d\n", dsi_display->panel->panelPcdCheck_enable);
 	else
 	    return scnprintf(buf, PAGE_SIZE, "%s\n", "Not a DSI panel");
+}
+
+static ssize_t panelPcdValue_show(struct device *device,
+	struct device_attribute *attr, char *buf)
+{
+	struct drm_connector *conn;
+	struct sde_connector *sde_conn;
+	struct dsi_display *dsi_display;
+	struct dsi_panel *panel;
+
+	int rc;
+	ssize_t len=0;
+
+	if (!device || !buf) {
+		SDE_ERROR("invalid input param(s)\n");
+		return -EAGAIN;
+	}
+
+	pr_info("%s: ++", __func__);
+	conn = dev_get_drvdata(device);
+	sde_conn = to_sde_connector(conn);
+	dsi_display = sde_conn->display;
+
+	if (!dsi_display || !dsi_display->panel) {
+		pr_info("%s: display panel NULL, return\n", __func__);
+		return -EINVAL;
+	}
+
+	panel = dsi_display->panel;
+	rc = dsi_panel_read_pcd_reg(panel, true);
+	if (!rc)
+		len += snprintf(buf + len, PAGE_SIZE - len, "%02x", panel->pcd_config.pcd_reg_val);
+
+	return len;
+}
+
+static ssize_t panelHwStatus_show(struct device *device,
+	struct device_attribute *attr, char *buf)
+{
+	struct drm_connector *conn;
+	struct sde_connector *sde_conn;
+	struct dsi_display *dsi_display;
+
+	ssize_t len = 0;
+
+	if (!device || !buf) {
+		SDE_ERROR("invalid input param(s)\n");
+		return -EAGAIN;
+	}
+
+	pr_debug("%s: +", __func__);
+	conn = dev_get_drvdata(device);	sde_conn = to_sde_connector(conn);
+	dsi_display = sde_conn->display;
+
+	if (!dsi_display || !dsi_display->panel) {
+		pr_info("%s: display panel NULL, return\n", __func__);
+		return -EINVAL;
+	}
+
+	len += snprintf(buf, PAGE_SIZE, "%d\n", dsi_display->panel->pcd_config.pcd_reg_status);
+	return len;
 }
 
 static ssize_t panelDeclare_show(struct device *device,
@@ -6898,6 +6980,8 @@ static DEVICE_ATTR_RO(panelBLExponent);
 static DEVICE_ATTR_RO(panelCellId);
 static DEVICE_ATTR_RO(panelDC);
 static DEVICE_ATTR_RW(panelPcdCheck);
+static DEVICE_ATTR_RO(panelPcdValue);
+static DEVICE_ATTR_RO(panelHwStatus);
 static DEVICE_ATTR_RO(panelDeclare);
 
 static const struct attribute *sde_conn_panel_attrs[] = {
@@ -6910,6 +6994,8 @@ static const struct attribute *sde_conn_panel_attrs[] = {
 	&dev_attr_panelCellId.attr,
 	&dev_attr_panelDC.attr,
 	&dev_attr_panelPcdCheck.attr,
+	&dev_attr_panelPcdValue.attr,
+	&dev_attr_panelHwStatus.attr,
 	&dev_attr_panelDeclare.attr,
 	NULL
 };
@@ -8234,7 +8320,6 @@ int dsi_display_get_modes_helper(struct dsi_display *display,
 
 			dsi_display_get_dfps_timing(display, sub_mode,
 					curr_refresh_rate);
-
 			/* Avoid override for first sub mode in POMS enabled video mode usecase */
 			if ((i != start) && support_cmd_mode && support_video_mode)
 				sub_mode->panel_mode_caps = DSI_OP_VIDEO_MODE;

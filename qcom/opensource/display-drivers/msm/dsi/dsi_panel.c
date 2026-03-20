@@ -539,6 +539,14 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
 			pr_info("%s: (%s)+power is alway on \n", __func__, panel->name);
 		goto exit;
 	}
+
+	if ((panel->tp_state_check_enable) && (!panel->tp_state)) {
+		if( (panel->deep_standby_need_twice_reset)) {
+			pr_info("%s: (%s)+exit deep standby need reset \n", __func__, panel->name);
+			rc = dsi_panel_reset(panel);
+		}
+	}
+
 	if (gpio_is_valid(panel->reset_config.vio_en_gpio))
 		gpio_set_value(panel->reset_config.vio_en_gpio, 1);
 
@@ -851,6 +859,18 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 		bl_lvl = mot_backlight_level_eqs[bl_lvl];
 	}
 
+	/* sometimes, aod update when screen off, bl_lvl=0 time,
+	     so aod maybe set to min bl wrong*/
+	if (bl_lvl)
+		panel->bl_config.aod_bl_level = bl_lvl;
+
+	if(panel->backlight_map_type == 1)
+		bl_lvl = mot_backlight_level[bl_lvl][panel->backlight_map_type-1];
+	else if(panel->backlight_map_type == 2 && bl_lvl <= 3515){
+		DSI_INFO("tianma map bl_lvl = %d",mot_backlight_level_eqs[bl_lvl]);
+		bl_lvl = mot_backlight_level_eqs[bl_lvl];
+	}
+
 	if (panel->bl_config.bl_inverted_dbv)
 		bl_lvl = (((bl_lvl & 0xff) << 8) | (bl_lvl >> 8));
 
@@ -969,7 +989,11 @@ static bool dsi_panel_set_hbm_backlight(struct dsi_panel *panel, u32 *bl_lvl)
 			panel->bl_config.bl_max_level : panel->bl_lvl_during_hbm;
 		return false;
 	} else {
-		panel->bl_lvl_during_hbm = bl_level;
+		if (panel->aod_config.enable) {
+			if (bl_level)
+				panel->bl_lvl_during_hbm = bl_level;
+		} else
+			panel->bl_lvl_during_hbm = bl_level;
 		if (dsi_panel_param_is_hbm_on(panel)) {
 			DSI_INFO("HBM is on.. ignore setting backlight. bl_vl=%d\n",
 				panel->bl_lvl_during_hbm);
@@ -983,6 +1007,14 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 {
 	int rc = 0;
 	struct dsi_backlight_config *bl = &panel->bl_config;
+
+	u32 level = 0;
+	u32 sleep_ms = 0;
+	u32 backlight_off_threshold = 0;
+	u32 backlight_on_threshold = 0;
+	int last_level = 0;
+	int i = 0;
+	int count = 0;
 
 	if (panel->host_config.ext_bridge_mode)
 		return 0;
@@ -1012,12 +1044,47 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 	case DSI_BACKLIGHT_I2C:
 		if (!(bl->i2c_bd))
 			bl->i2c_bd = backlight_device_get_by_type(BACKLIGHT_PLATFORM);
-		else
+		else{
+			last_level = bl->last_bl_level;
+			if(bl->bl_off_enabled){
+				backlight_off_threshold = bl->bl_off_threshold;
+				if(last_level > backlight_off_threshold && bl_lvl == 0){
+					count = bl->bl_off_count;
+					for (i = 0; i < count; i++){
+						level = bl->bl_off_dimming_seq[i].level;
+						sleep_ms = bl->bl_off_dimming_seq[i].sleep_ms;
+						rc = backlight_device_set_brightness(bl->i2c_bd, level);
+						mdelay(sleep_ms);
+					}
+				}
+			}
+			if(bl->bl_on_enabled){
+				backlight_on_threshold = bl->bl_on_threshold;
+				if(last_level == 0 && bl_lvl > backlight_on_threshold){
+					count = bl->bl_on_count;
+					for (i = 0; i < count; i++){
+						level = bl->bl_on_dimming_seq[i].level;
+						sleep_ms = bl->bl_on_dimming_seq[i].sleep_ms;
+						rc = backlight_device_set_brightness(bl->i2c_bd, level);
+						mdelay(sleep_ms);
+					}
+				}
+			}
 			rc = backlight_device_set_brightness(bl->i2c_bd, bl_lvl);
+			bl->last_bl_level = bl_lvl;
+		}
 		break;
 	default:
 		DSI_ERR("Backlight type(%d) not supported\n", bl->type);
 		rc = -ENOTSUPP;
+	}
+
+	if(panel->aod_config.bl_vid_update && panel->panel_trueaod_state){
+		dsi_panel_aod_backlight_update(panel, DSI_CMD_SET_CMD_BACKLIGHT);
+	       rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_CMD_BACKLIGHT);
+		if (rc)
+		       DSI_ERR("[%s] failed to send DSI_CMD_SET_CMD_SWITCH_IN cmds, rc=%d\n",
+		            panel->name, rc);
 	}
 
 	return rc;
@@ -1443,7 +1510,8 @@ static int dsi_panel_set_hbm(struct dsi_panel *panel,
 	} else {
 		bl_lvl = HBM_BRIGHTNESS(param_info->value);
 		mutex_lock(&panel->panel_lock);
-		rc = dsi_panel_set_backlight(panel, bl_lvl);
+		if (!panel->panel_trueaod_state) /* only send bl in video mode, panel_trueaod_state default false */
+			rc = dsi_panel_set_backlight(panel, bl_lvl);
 		mutex_unlock(&panel->panel_lock);
 		if (rc)
 			DSI_ERR("unable to set backlight\n");
@@ -1493,7 +1561,13 @@ static int dsi_panel_set_dc(struct dsi_panel *panel,
 	if (rc < 0)
 		DSI_ERR("%s: failed to send param cmds. ret=%d\n", __func__, rc);
 
-        return rc;
+	//get pcd reg
+	if (panel->pcd_config.pcd_reg_enabled && panel->pcd_config.pcd_reg_read_flag && (panel->bl_config.bl_level > 0)) {
+		pr_debug("dsi:start pcd check\n");
+		dsi_panel_read_pcd_reg(panel, false);
+	}
+
+	return rc;
 };
 
 static int dsi_panel_set_color(struct dsi_panel *panel,
@@ -1512,11 +1586,29 @@ int dsi_panel_set_param(struct dsi_panel *panel,
 				struct msm_param_info *param_info)
 {
 	int rc = 0;
+	struct panel_param *panel_param;
 
 	if (!panel || !param_info) {
                 DSI_ERR("invalid params\n");
                 return -EINVAL;
         }
+
+	if (panel->panel_trueaod_state) {
+		DSI_ERR("panel in Aod\n");
+		return -EINVAL;
+	}
+
+
+	if (param_info->param_idx >= PARAM_ID_NUM) {
+		DSI_ERR("Invalid param_idx %d\n", param_info->param_idx);
+		return -EINVAL;
+	}
+	panel_param = &panel->param_cmds[param_info->param_idx];
+
+	if (!panel_param->is_supported) {
+		DSI_INFO("param_idx %d is not supported\n", param_info->param_idx);
+		return rc;
+	}
 
 	DSI_DEBUG("%s+\n", __func__);
 
@@ -2834,6 +2926,10 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-hbm-backlight-command",
 	"qcom,mdss-dsi-pcd-check-enable-command",
 	"qcom,mdss-dsi-pcd-check-disable-command",
+	"qcom,cmd-mode-backlight-commands",
+	"qcom,mdss-dsi-off-deep-standby-command",
+	"qcom,mdss-dsi-off-post-command",
+	"qcom,mdss-dsi-panel-pcd-reg-command",
 };
 
 const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
@@ -2888,6 +2984,10 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-hbm-backlight-command-state",
 	"qcom,mdss-dsi-pcd-check-enable-command-state",
 	"qcom,mdss-dsi-pcd-check-disable-command-state",
+	"qcom,cmd-mode-backlight-commands-state",
+	"qcom,mdss-dsi-off-deep-standby-command-state",
+	"qcom,mdss-dsi-off-post-command-state",
+	"qcom,mdss-dsi-panel-pcd-reg-command-state",
 };
 
 int dsi_panel_get_cmd_pkt_count(const char *data, u32 length, u32 *cnt)
@@ -3148,6 +3248,192 @@ static int dsi_panel_parse_reset_sequence(struct dsi_panel *panel)
 
 	panel->reset_config.sequence = seq;
 	panel->reset_config.count = count;
+
+	for (i = 0; i < length; i += 2) {
+		seq->level = arr_32[i];
+		seq->sleep_ms = arr_32[i + 1];
+		seq++;
+	}
+
+
+error_free_arr_32:
+	kfree(arr_32);
+error:
+	return rc;
+}
+
+static int dsi_panel_parse_bl_off_dimming_sequence(struct dsi_panel *panel)
+{
+	int rc = 0;
+	int i;
+	u32 length = 0;
+	u32 count = 0;
+	u32 size = 0;
+	u32 backlight_off_threshold = 0;
+	u32 *arr_32 = NULL;
+	const u32 *arr;
+	struct dsi_parser_utils *utils = NULL;
+	struct dsi_bl_dimming_seq *seq = NULL;
+
+	if (!panel) {
+		DSI_ERR("Invalid params\n");
+		return -EINVAL;
+	}
+	utils = &panel->utils;
+
+	panel->bl_config.bl_off_enabled =
+		utils->read_bool(utils->data, "qcom,mdss-dsi-backlight-off-dimming-enabled");
+	if(!panel->bl_config.bl_off_enabled) {
+		goto error;
+	}
+
+	DSI_DEBUG("%s: mdss-dsi-backlight-off-dimming feature %s\n", __func__,
+		(panel->bl_config.bl_off_enabled ? "enabled" : "disabled"));
+
+	rc = utils->read_u32(utils->data,
+				"qcom,mdss-dsi-backlight-off-threshold",
+				  &backlight_off_threshold);
+	if (rc) {
+		DSI_ERR("failed to read qcom,mdss-dsi-backlight-off-threshold, rc=%d\n",
+		       rc);
+		goto error;
+	}
+	panel->bl_config.bl_off_threshold = backlight_off_threshold;
+	arr = utils->get_property(utils->data,
+			"qcom,mdss-dsi-backlight-off-dimming", &length);
+	if (!arr) {
+		DSI_ERR("[%s] dsi-backlight-off-dimming not found\n", panel->name);
+		rc = -EINVAL;
+		goto error;
+	}
+	if (length & 0x1) {
+		DSI_ERR("[%s] syntax error for dsi-backlight-off-dimming\n",
+		       panel->name);
+		rc = -EINVAL;
+		goto error;
+	}
+
+	DSI_DEBUG("DIMMING SEQ LENGTH = %d\n", length);
+	length = length / sizeof(u32);
+
+	size = length * sizeof(u32);
+
+	arr_32 = kzalloc(size, GFP_KERNEL);
+	if (!arr_32) {
+		rc = -ENOMEM;
+		goto error;
+	}
+
+	rc = utils->read_u32_array(utils->data, "qcom,mdss-dsi-backlight-off-dimming",
+					arr_32, length);
+	if (rc) {
+		DSI_ERR("[%s] cannot read backlight-off-dimming-seqience\n", panel->name);
+		goto error_free_arr_32;
+	}
+
+	count = length / 2;
+	size = count * sizeof(*seq);
+	seq = kzalloc(size, GFP_KERNEL);
+	if (!seq) {
+		rc = -ENOMEM;
+		goto error_free_arr_32;
+	}
+
+	panel->bl_config.bl_off_dimming_seq = seq;
+	panel->bl_config.bl_off_count = count;
+
+	for (i = 0; i < length; i += 2) {
+		seq->level = arr_32[i];
+		seq->sleep_ms = arr_32[i + 1];
+		seq++;
+	}
+
+
+error_free_arr_32:
+	kfree(arr_32);
+error:
+	return rc;
+}
+
+static int dsi_panel_parse_bl_on_dimming_sequence(struct dsi_panel *panel)
+{
+	int rc = 0;
+	int i;
+	u32 length = 0;
+	u32 count = 0;
+	u32 size = 0;
+	u32 backlight_on_threshold = 0;
+	u32 *arr_32 = NULL;
+	const u32 *arr;
+	struct dsi_parser_utils *utils = NULL;
+	struct dsi_bl_dimming_seq *seq = NULL;
+
+	if (!panel) {
+		DSI_ERR("Invalid params\n");
+		return -EINVAL;
+	}
+	utils = &panel->utils;
+
+	panel->bl_config.bl_on_enabled =
+		utils->read_bool(utils->data, "qcom,mdss-dsi-backlight-on-dimming-enabled");
+	if(!panel->bl_config.bl_on_enabled) {
+		goto error;
+	}
+
+	DSI_DEBUG("%s: mdss-dsi-backlight-on-dimming feature %s\n", __func__,
+		(panel->bl_config.bl_on_enabled ? "enabled" : "disabled"));
+
+	rc = utils->read_u32(utils->data,
+				"qcom,mdss-dsi-backlight-on-threshold",
+				  &backlight_on_threshold);
+	if (rc) {
+		DSI_ERR("failed to read qcom,mdss-dsi-backlight-on-threshold, rc=%d\n",
+		       rc);
+		goto error;
+	}
+	panel->bl_config.bl_on_threshold = backlight_on_threshold;
+	arr = utils->get_property(utils->data,
+			"qcom,mdss-dsi-backlight-on-dimming", &length);
+	if (!arr) {
+		DSI_ERR("[%s] dsi-backlight-on-dimming not found\n", panel->name);
+		rc = -EINVAL;
+		goto error;
+	}
+	if (length & 0x1) {
+		DSI_ERR("[%s] syntax error for dsi-backlight-on-dimming\n",
+		       panel->name);
+		rc = -EINVAL;
+		goto error;
+	}
+
+	DSI_DEBUG("DIMMING SEQ LENGTH = %d\n", length);
+	length = length / sizeof(u32);
+
+	size = length * sizeof(u32);
+
+	arr_32 = kzalloc(size, GFP_KERNEL);
+	if (!arr_32) {
+		rc = -ENOMEM;
+		goto error;
+	}
+
+	rc = utils->read_u32_array(utils->data, "qcom,mdss-dsi-backlight-on-dimming",
+					arr_32, length);
+	if (rc) {
+		DSI_ERR("[%s] cannot read backlight-on-dimming-seqience\n", panel->name);
+		goto error_free_arr_32;
+	}
+
+	count = length / 2;
+	size = count * sizeof(*seq);
+	seq = kzalloc(size, GFP_KERNEL);
+	if (!seq) {
+		rc = -ENOMEM;
+		goto error_free_arr_32;
+	}
+
+	panel->bl_config.bl_on_dimming_seq = seq;
+	panel->bl_config.bl_on_count = count;
 
 	for (i = 0; i < length; i += 2) {
 		seq->level = arr_32[i];
@@ -3513,11 +3799,26 @@ static int dsi_panel_parse_bl_config(struct dsi_panel *panel)
 {
 	int rc = 0;
 	u32 val = 0;
+	u32 backlight_default = 0;
 	const char *bl_type = NULL;
 	const char *data = NULL;
 	const char *state = NULL;
 	struct dsi_parser_utils *utils = &panel->utils;
 	char *bl_name = NULL;
+
+	rc = dsi_panel_parse_bl_off_dimming_sequence(panel);
+	if (rc) {
+		DSI_DEBUG("[%s] failed to parse bl off dimming sequence, rc=%d\n",
+		       panel->name, rc);
+		rc = 0;
+	}
+
+	rc = dsi_panel_parse_bl_on_dimming_sequence(panel);
+	if (rc) {
+		DSI_DEBUG("[%s] failed to parse bl on dimming sequence, rc=%d\n",
+		       panel->name, rc);
+		rc = 0;
+	}
 
 	if (!strcmp(panel->type, "primary"))
 		bl_name = "qcom,mdss-dsi-bl-pmic-control-type";
@@ -3555,6 +3856,17 @@ static int dsi_panel_parse_bl_config(struct dsi_panel *panel)
 						panel->name, data);
 		panel->bl_config.bl_update = BL_UPDATE_NONE;
 	}
+
+	rc = utils->read_u32(utils->data,
+				"qcom,mdss-dsi-backlight-default",
+				  &backlight_default);
+	if (rc) {
+		DSI_DEBUG("failed to read qcom,mdss-dsi-backlight-default, rc=%d\n",
+		       rc);
+		backlight_default = 890;
+		rc = 0;
+	}
+	panel->bl_config.last_bl_level = backlight_default;
 
 	panel->bl_config.bl_scale = MAX_BL_SCALE_LEVEL;
 	panel->bl_config.bl_scale_sv = MAX_SV_BL_SCALE_LEVEL;
@@ -4867,6 +5179,199 @@ static void dsi_panel_cellid_config_deinit(struct drm_panel_cellid_config *celli
 		kfree(cellid_config->return_buf);
 }
 
+static int dsi_panel_parse_pcd_config(struct dsi_panel *panel)
+{
+	int rc = 0;
+	struct drm_panel_pcd_config *pcd_config;
+	struct dsi_parser_utils *utils = &panel->utils;
+
+	if (!panel) {
+		DSI_ERR("Invalid Params\n");
+		return -EINVAL;
+	}
+
+	pcd_config = &panel->pcd_config;
+	if (!pcd_config)
+		return -EINVAL;
+
+	pcd_config->pcd_reg_enabled = utils->read_bool(utils->data,
+		"qcom,pcd-reg-read-enabled");
+
+	if (!pcd_config->pcd_reg_enabled)
+		return 0;
+
+	dsi_panel_parse_cmd_sets_sub(&pcd_config->pcd_reg_cmd,
+				DSI_CMD_SET_PANEL_PCD_REG, utils);
+	if (!pcd_config->pcd_reg_cmd.count) {
+		DSI_ERR("panel pcd_reg command parsing failed\n");
+		rc = -EINVAL;
+		goto error;
+	}
+
+	rc = utils->read_u32(utils->data,
+		"qcom,mdss-dsi-panel-pcd-reg-read-length",
+		&(pcd_config->pcd_reg_rlen));
+	if (rc) {
+		DSI_ERR("%s:qcom,mdss-dsi-panel-pcd-reg-read-length, set it to 1\n", __func__);
+		pcd_config->pcd_reg_rlen = 1;
+	}
+
+	rc = utils->read_u32(utils->data,
+		"qcom,mdss-dsi-panel-pcd-reg-offset",
+		&(pcd_config->pcd_reg_offset));
+	if (rc) {
+		DSI_INFO("%s:qcom,mdss-dsi-panel-pcd-reg-offset, set it to 0\n", __func__);
+		pcd_config->pcd_reg_offset = 0;
+	}
+
+	rc = utils->read_u32(utils->data,
+		"qcom,mdss-dsi-panel-pcd-reg-mask",
+		&(pcd_config->pcd_reg_mask));
+	if (rc) {
+		DSI_INFO("%s:qcom,mdss-dsi-panel-pcd-reg-mask, set it to 0\n", __func__);
+		pcd_config->pcd_reg_mask = 0;
+	}
+
+	pcd_config->return_buf = kcalloc(pcd_config->pcd_reg_rlen,
+			sizeof(unsigned char), GFP_KERNEL);
+	if (!pcd_config->return_buf) {
+		DSI_ERR("%s:kcalloc for return_buf error \n", __func__);
+		rc = -ENOMEM;
+		goto error;
+	}
+
+	pcd_config->check_before_read = utils->read_bool(utils->data, "qcom,pcd-reg-check-before-read");
+
+	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-panel-pcd-reg-pass-min",
+		&(pcd_config->pcd_reg_pass_min));
+	if (rc)
+		pcd_config->pcd_reg_pass_min = 0;
+
+	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-panel-pcd-reg-pass-max",
+		&(pcd_config->pcd_reg_pass_max));
+	if (rc) {
+		pcd_config->pcd_reg_pass_max = 0;
+		DSI_WARN("%s:warn: qcom,mdss-dsi-panel-pcd-reg-pass-max not set\n", __func__);
+	}
+	else
+		pcd_config->pcd_reg_status = 1;  //If a max value is configured, the PCD check is considered active. Default status is OK.
+
+	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-panel-pcd-reg-pass-array-size",
+		&(pcd_config->pcd_reg_pass_array_size));
+	if (rc || !pcd_config->pcd_reg_pass_array_size) {
+		pcd_config->pcd_reg_pass_array_size = 1;
+		DSI_WARN("%s:warn: qcom,mdss-dsi-panel-pcd-reg-pass-array-size set default 1\n", __func__);
+	}
+
+	rc = utils->read_u32_array(utils->data,
+		"qcom,mdss-dsi-panel-pcd-reg-pass-array",
+		pcd_config->pcd_reg_pass_array, pcd_config->pcd_reg_pass_array_size);
+	if (rc) {
+		pcd_config->pcd_reg_pass_array_size = 0;
+		DSI_INFO("%s:qcom,mdss-dsi-panel-pcd-reg-pass-array not set\n", __func__);
+	}
+	else
+		pcd_config->pcd_reg_status = 1;  //set 1 for default OK status when pass array set
+
+	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-panel-pcd-reg-seq-interval", &(pcd_config->check_seq_interval));
+	if (rc) {
+		pcd_config->check_seq_interval = PCD_REG_SEQ_INTERVAL_DEFAULT;
+		DSI_DEBUG("%s:warn:qcom,mdss-dsi-panel-pcd-reg-seq-interval set default %d\n", __func__, PCD_REG_SEQ_INTERVAL_DEFAULT);
+	}
+
+	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-panel-pcd-check-time-interval-in-minutes", &(pcd_config->check_interval_in_mins));
+	if (rc) {
+		pcd_config->check_interval_in_mins = PCD_REG_CHECK_INTERVAL_IN_MINUTES;
+		DSI_DEBUG("%s:qcom,mdss-dsi-panel-pcd-check-time-interval-in-minutes set default %d\n", __func__, pcd_config->check_interval_in_mins);
+	}
+
+	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-panel-pcd-reg-read-delay-ms", &(pcd_config->pcd_reg_read_delay_ms));
+	if (rc) {
+		pcd_config->pcd_reg_read_delay_ms = 150;
+		DSI_DEBUG("%s: qcom,mdss-dsi-panel-pcd-reg-read-delay-ms not set, use default:%d\n", __func__, pcd_config->pcd_reg_read_delay_ms);
+	}
+	else
+		DSI_INFO("%s:qcom,mdss-dsi-panel-pcd-reg-read-delay-ms set:%d\n", __func__, pcd_config->pcd_reg_read_delay_ms);
+
+	return 0;
+error:
+	pcd_config->pcd_reg_enabled = false;
+	return rc;
+}
+
+static void dsi_panel_pcd_config_deinit(struct drm_panel_pcd_config *pcd_config)
+{
+	if (pcd_config->return_buf)
+		kfree(pcd_config->return_buf);
+}
+
+static int dsi_panel_parse_aod_config(struct dsi_panel *panel)
+{
+	int rc = 0;
+	struct dsi_panel_aod_config *aod_config;
+	struct dsi_parser_utils *utils = &panel->utils;
+
+	if (!panel) {
+		DSI_ERR("Invalid Params\n");
+		return -EINVAL;
+	}
+
+	aod_config = &panel->aod_config;
+	aod_config->enable = utils->read_bool(utils->data,
+		"qcom,mdss-dsi-panel-AOD-config-enabled");
+
+	if (aod_config->enable) {
+		aod_config->bl_vid_update= utils->read_bool(utils->data,
+                    "qcom,mdss-dsi-panel-AOD-bl-vid-update");
+
+		rc = utils->read_u32(utils->data,
+                    "qcom,mdss-dsi-panel-AOD-THRESHOLD-min-nit",
+                    &(aod_config->min_nit));
+		if (rc) {
+                    DSI_ERR("%s:qcom,mdss-dsi-panel-AOD-THRESHOLD-min-nit, set it to 0\n", __func__);
+                    aod_config->min_nit = 0;
+		}
+
+		rc = utils->read_u32(utils->data,
+                    "qcom,mdss-dsi-panel-AOD-THRESHOLD-hig-nit",
+                    &(aod_config->hig_nit));
+		if (rc) {
+                    DSI_ERR("%s:qcom,mdss-dsi-panel-AOD-THRESHOLD-hig-nit, set it to 0\n", __func__);
+                    aod_config->hig_nit = 0;
+		}
+
+		rc = utils->read_u32(utils->data,
+                    "qcom,mdss-dsi-panel-AOD-bl-min",
+                    &(aod_config->min_bl_reg));
+		if (rc) {
+                    DSI_ERR("%s:qcom,mdss-dsi-panel-AOD-bl-min, set it to 0\n", __func__);
+                    aod_config->min_bl_reg = 0;
+		}
+
+		rc = utils->read_u32(utils->data,
+                    "qcom,mdss-dsi-panel-AOD-bl-mid",
+                    &(aod_config->mid_bl_reg));
+		if (rc) {
+                    DSI_ERR("%s:qcom,mdss-dsi-panel-AOD-bl-mid, set it to 0\n", __func__);
+                    aod_config->mid_bl_reg = 0;
+		}
+
+		rc = utils->read_u32(utils->data,
+                    "qcom,mdss-dsi-panel-AOD-bl-hig",
+                    &(aod_config->hig_bl_reg));
+		if (rc) {
+                    DSI_ERR("%s:qcom,mdss-dsi-panel-AOD-bl-hig, set it to 0\n", __func__);
+                    aod_config->hig_bl_reg= 0;
+		}
+
+		aod_config->cmd_resend = utils->read_bool(utils->data,
+                    "qcom,mdss-dsi-panel-AOD-command-resend");
+
+       }
+       DSI_INFO("%s:aod_config->enable = %d\n", __func__, aod_config->enable);
+
+       return 0;
+}
 
 static void dsi_panel_update_util(struct dsi_panel *panel,
 				  struct device_node *parser_node)
@@ -5053,6 +5558,9 @@ static int dsi_panel_parse_mot_panel_config(struct dsi_panel *panel,
 
 	panel->tp_state_need_reset = of_property_read_bool(of_node,
 				"qcom,tp_state_need_reset");
+
+	panel->deep_standby_need_twice_reset = of_property_read_bool(of_node,
+				"qcom,deep-standby-need-twice-reset");
 
 	rc = of_property_read_u32(of_node,
 				"qcom,backlight_map_type",&panel->backlight_map_type);
@@ -5306,6 +5814,14 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 	if (rc)
 		DSI_DEBUG("failed to parse local cellid config, rc=%d\n", rc);
 
+	rc = dsi_panel_parse_pcd_config(panel);
+	if (rc)
+		DSI_DEBUG("failed to parse pcd reg config, rc=%d\n", rc);
+
+	rc = dsi_panel_parse_aod_config(panel);
+	if (rc)
+		DSI_DEBUG("failed to parse local cellid config, rc=%d\n", rc);
+
 	rc = dsi_panel_vreg_get(panel);
 	if (rc) {
 		DSI_ERR("[%s] failed to get panel regulators, rc=%d\n",
@@ -5336,6 +5852,7 @@ void dsi_panel_put(struct dsi_panel *panel)
 	dsi_panel_esd_config_deinit(&panel->esd_config);
 	dsi_panel_cellid_config_deinit(&panel->cellid_config);
 	dsi_panel_lhbm_config_deinit(&panel->lhbm_config);
+	dsi_panel_pcd_config_deinit(&panel->pcd_config);
 
 	kfree(panel->avr_caps.avr_step_fps_list);
 	kfree(panel);
@@ -5550,7 +6067,7 @@ int dsi_panel_get_mode_count(struct dsi_panel *panel)
 	num_dfps_rates = !panel->dfps_caps.dfps_support ? 1 :
 					panel->dfps_caps.dfps_list_len;
 
-	/* Inflate num_of_modes by fps in dfps. */
+	 /* Inflate num_of_modes by fps in dfps. */
 	num_video_modes = num_video_modes * num_dfps_rates;
 
 	panel->num_display_modes = num_video_modes + num_cmd_modes;
@@ -6273,7 +6790,10 @@ int dsi_panel_switch_cmd_mode_out(struct dsi_panel *panel)
 
 	mutex_lock(&panel->panel_lock);
 
+	panel->panel_trueaod_state = true;
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_CMD_SWITCH_OUT);
+	if (panel->aod_config.cmd_resend)
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_CMD_SWITCH_OUT);
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_CMD_SWITCH_OUT cmds, rc=%d\n",
 		       panel->name, rc);
@@ -6293,7 +6813,10 @@ int dsi_panel_switch_video_mode_out(struct dsi_panel *panel)
 
 	mutex_lock(&panel->panel_lock);
 
+	panel->panel_trueaod_state = true;
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_VID_SWITCH_OUT);
+	if (panel->aod_config.cmd_resend)
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_VID_SWITCH_OUT);
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_VID_SWITCH_OUT cmds, rc=%d\n",
 		       panel->name, rc);
@@ -6314,9 +6837,25 @@ int dsi_panel_switch_video_mode_in(struct dsi_panel *panel)
 	mutex_lock(&panel->panel_lock);
 
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_VID_SWITCH_IN);
+	if (panel->aod_config.cmd_resend)
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_VID_SWITCH_IN);
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_VID_SWITCH_IN cmds, rc=%d\n",
 		       panel->name, rc);
+
+	panel->panel_trueaod_state = false;
+
+	if(panel->aod_config.bl_vid_update){
+		if(panel->bl_config.bl_level > 0)
+			dsi_panel_set_backlight(panel, panel->bl_config.bl_level);
+		else if(panel->bl_config.aod_bl_level > 0)
+			dsi_panel_set_backlight(panel, panel->bl_config.aod_bl_level);
+		else
+			dsi_panel_set_backlight(panel, panel->bl_config.brightness_default_level);
+
+		DSI_INFO("dsi_panel_switch_video_mode_in update backlight bl_level %d aod_bl_leve %d\n",
+			panel->bl_config.bl_level,panel->bl_config.aod_bl_level);
+	}
 
 	mutex_unlock(&panel->panel_lock);
 	return rc;
@@ -6333,7 +6872,13 @@ int dsi_panel_switch_cmd_mode_in(struct dsi_panel *panel)
 
 	mutex_lock(&panel->panel_lock);
 
+	panel->panel_trueaod_state = true;
+	if (panel->aod_config.bl_vid_update)
+		dsi_panel_aod_backlight_update(panel, DSI_CMD_SET_CMD_SWITCH_IN);
+
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_CMD_SWITCH_IN);
+	if (panel->aod_config.cmd_resend)
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_CMD_SWITCH_IN);
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_CMD_SWITCH_IN cmds, rc=%d\n",
 		       panel->name, rc);
@@ -6767,6 +7312,38 @@ int dsi_panel_disable(struct dsi_panel *panel)
 					panel->name, rc);
 			rc = 0;
 		}
+		if (panel->tp_state_check_enable && (!panel_power_is_alway_on (panel))) {
+			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_OFF_DEEP_STANDBY);
+			if (rc) {
+			/*
+			 * Sending panel off deep sleep commands may fail when  DSI
+			 * controller is in a bad state. These failures can be
+			 * ignored since controller will go for full reset on
+			 * subsequent display enable anyway.
+			 */
+			pr_warn_ratelimited("[%s] failed to send DSI_CMD_SET_OFF_DEEP_STANDBY cmds, rc=%d\n",
+					panel->name, rc);
+			rc = 0;
+			} else {
+				pr_info("%s: (%s)+ : send deep_standby commands success! \n", __func__, panel->name);
+			}
+		} else {
+			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_OFF_PANELIC_MIPI);
+			if (rc) {
+			/*
+			 * Sending panel off disable ic mipi commands may fail when  DSI
+			 * controller is in a bad state. These failures can be
+			 * ignored since controller will go for full reset on
+			 * subsequent display enable anyway.
+			 */
+			pr_warn_ratelimited("[%s] failed to send DSI_CMD_SET_OFF_PANELIC_MIPI cmds, rc=%d\n",
+					panel->name, rc);
+			rc = 0;
+			} else {
+				pr_info("%s: (%s)+ :send panel ic off mipi commands success! \n", __func__, panel->name);
+			}
+		}
+
 	}
 	panel->panel_initialized = false;
 	panel->power_mode = SDE_MODE_DPMS_OFF;
@@ -6932,15 +7509,88 @@ error:
 	return rc;
 }
 
-void set_panelpcdcheck_enable(struct dsi_panel *panel)
+int dsi_panel_tx_pcd_reg_cmd(struct dsi_panel *panel)
+{
+	int rc = 0, i = 0;
+	ssize_t len;
+	struct dsi_cmd_desc *cmds;
+	struct drm_panel_pcd_config *pcd_config;
+	enum dsi_cmd_set_state state;
+	u32 count;
+
+	if (!panel) {
+		DSI_ERR("Invalid Params\n");
+		return -EINVAL;
+	}
+
+	pcd_config = &panel->pcd_config;
+	if (!pcd_config) {
+		DSI_ERR("pcd_config is null\n");
+		return -EINVAL;
+	}
+
+	len = pcd_config->pcd_reg_rlen;
+	count = pcd_config->pcd_reg_cmd.count;
+	cmds = pcd_config->pcd_reg_cmd.cmds;
+	state = pcd_config->pcd_reg_cmd.state;
+
+	if (count == 0) {
+		DSI_INFO("[%s] No DSI_CMD_SET_PANEL_PCD_REG commands to be sent\n",
+			 panel->name);
+		goto error;
+	}
+
+	if (panel->panel_trueaod_state) {
+		DSI_INFO("%s: panel in aod, skip\n", __func__);
+		return 0;
+	}
+
+	dsi_panel_acquire_panel_lock(panel);
+	for (i = 0; i < count; i++) {
+		cmds->ctrl_flags = 0;
+
+		if (state == DSI_CMD_SET_STATE_LP)
+			cmds->msg.flags |= MIPI_DSI_MSG_USE_LPM;
+
+		if (cmds->msg.type == MIPI_DSI_DCS_READ) {
+			cmds->msg.flags |= MIPI_DSI_MSG_UNICAST_COMMAND;
+			cmds->msg.rx_buf = pcd_config->return_buf;
+			cmds->msg.rx_len = (pcd_config->pcd_reg_rlen > MAX_PANEL_PCD_REG_LEN) ?
+							 MAX_PANEL_PCD_REG_LEN : pcd_config->pcd_reg_rlen;
+			cmds->ctrl_flags = DSI_CTRL_CMD_READ;
+		}
+
+		len = dsi_host_transfer_sub(panel->host, cmds);
+		if (len < 0) {
+			rc = len;
+			DSI_ERR("failed to set DSI_CMD_SET_PANEL_PCD_REG  cmds, rc=%d\n", rc);
+			goto error;
+		}
+		if (cmds->post_wait_ms)
+			usleep_range(cmds->post_wait_ms*1000,
+					((cmds->post_wait_ms*1000)+10));
+		cmds++;
+	}
+error:
+	dsi_panel_release_panel_lock(panel);
+	return rc;
+}
+
+void set_panelpcdcheck_enable(struct dsi_panel *panel, bool check_en)
 {
 	int rc = 0;
 
 	if (!panel) {
 		DSI_ERR("Invalid params\n");
 	}
+
+	if (panel->panel_trueaod_state) {
+		DSI_INFO("%s:dsi: panel in aod, skip\n", __func__);
+		return;
+	}
+
 	mutex_lock(&panel->panel_lock);
-	if(panel->panelPcdCheck_enable > 0){
+	if(check_en) {
 		printk("Panel pcd check enable\n");
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_PANEL_PCD_ENABLE);
 	}else{
@@ -6948,10 +7598,208 @@ void set_panelpcdcheck_enable(struct dsi_panel *panel)
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_PANEL_PCD_DISABLE);
 	}
 	if (rc)
-		DSI_ERR("[%s] failed to send DSI_CMD_SET_PANEL_PCD_DISABLE cmds, rc=%d\n",
-		       panel->name, rc);
+		DSI_ERR("[%s] failed to send PCD cmds for en:%d, rc=%d\n",
+		       panel->name, check_en, rc);
+	else {
+		panel->pcd_config.pcd_reg_checkable = check_en;
+		if (check_en)
+			pr_info("%s:dsi set pcd_reg_checkable:%d\n", __func__, panel->pcd_config.pcd_reg_checkable);
+	}
 
 	mutex_unlock(&panel->panel_lock);
 
 }
 
+void dsi_panel_check_pcd_read_flag(struct dsi_panel *panel) {
+	if (panel->pcd_config.pcd_reg_enabled) {
+		int interval = panel->pcd_config.check_seq_interval;
+
+		if ((panel->pcd_config.check_seq_count < 2) && interval >= 10) {
+			//skip first five screen on seq for power on performance after reboot
+			//the screen on counts may increase fast if aod display enabled
+			panel->pcd_config.check_seq_count = interval - 5;
+			pr_info("%s: init check_seq_count:%d, interval:%d\n", __func__, panel->pcd_config.check_seq_count, interval);
+			goto end;
+		}
+
+		if (interval && !(panel->pcd_config.check_seq_count % interval)) {
+			panel->pcd_config.pcd_reg_read_flag = 1;
+			pr_debug("dsi: set pcd_reg_read_flag 1, check_seq_count:%d, interval:%d\n", panel->pcd_config.check_seq_count, interval);
+		}
+		else if (!interval) {
+			panel->pcd_config.pcd_reg_read_flag = 0;
+			pr_warn("%s:warn:check_seq_interval invalid 0, skip\n", __func__);
+		}
+		else
+			pr_debug("dsi:pcd:check_seq_count:%d\n", panel->pcd_config.check_seq_count);
+	}
+	else
+		pr_debug("pcd reg enabled:%d, skip\n", panel->pcd_config.pcd_reg_enabled);
+
+end:
+	return;
+}
+
+void dsi_panel_parse_pcd_status(struct dsi_panel *panel) {
+
+	if (!panel) {
+		pr_info("%s: panel NULL, return\n", __func__);
+		return;
+	}
+
+	//parser panel status
+	panel->pcd_config.pcd_reg_status = 0;
+	if (panel->pcd_config.pcd_reg_pass_max) {
+		if ((panel->pcd_config.pcd_reg_val >= panel->pcd_config.pcd_reg_pass_min)
+				&& (panel->pcd_config.pcd_reg_val <= panel->pcd_config.pcd_reg_pass_max)) {
+			//valid reg
+			panel->pcd_config.pcd_reg_status = 1;
+		}
+		else {
+			//NG
+			pr_warn("%s: warn: abnormal pcd reg val:0x%02x, max:0x%02x, min:0x%02x\n", __func__,
+						panel->pcd_config.pcd_reg_val, panel->pcd_config.pcd_reg_pass_max, panel->pcd_config.pcd_reg_pass_min);
+		}
+	}
+	else if (panel->pcd_config.pcd_reg_pass_array_size) {
+		for(int i = 0; i < panel->pcd_config.pcd_reg_pass_array_size; i++) {
+			if (panel->pcd_config.pcd_reg_val == panel->pcd_config.pcd_reg_pass_array[i]) {
+				//valid reg
+				panel->pcd_config.pcd_reg_status = 1;
+				break;
+			}
+		}
+	}
+	else {
+		pr_info("%s: not set reg pass check values, return\n", __func__);
+	}
+
+	if (panel->pcd_config.pcd_reg_status) {
+		//valid reg status 1
+		panel->pcd_config.retry_count = 0;
+		pr_info("%s: panel pcd reg: 0x%02x, hw status:%d ok\n", __func__, panel->pcd_config.pcd_reg_val, panel->pcd_config.pcd_reg_status);
+	}
+	else if (panel->pcd_config.pcd_reg_val) {
+		//NG reg value, set status 0xFF
+		panel->pcd_config.pcd_reg_status = 0xFF;
+		panel->pcd_config.retry_count = 0;
+		pr_info("%s: warn: abnormal panel pcd reg: 0x%02x, hw status:%d\n", __func__, panel->pcd_config.pcd_reg_val, panel->pcd_config.pcd_reg_status);
+	}
+	else {
+		//get 0 and not valid reg, retry check
+		if (panel->pcd_config.retry_count < PCD_REG_CHECK_RETRY_MAX) {
+			panel->pcd_config.retry_count++;
+			pr_info("%s: warn: fail get panel pcd reg: 0x%02x, hw status:%d. retry:%d\n",
+						__func__, panel->pcd_config.pcd_reg_val, panel->pcd_config.pcd_reg_status, panel->pcd_config.retry_count);
+		} else {
+			//get 0 but retry max, stop retry in this session. set reg_status 0
+			panel->pcd_config.pcd_reg_status = 0;
+			pr_info("%s: warn: retry:%d fail get panel pcd reg: 0x%02x, hw status:%d\n",
+						__func__, panel->pcd_config.retry_count, panel->pcd_config.pcd_reg_val, panel->pcd_config.pcd_reg_status);
+		}
+	}
+
+	return;
+}
+
+int dsi_panel_read_pcd_reg(struct dsi_panel *panel, bool force_get)
+{
+	int rc = 0;
+	int offset, value, pcd_reg_len = 0;
+	u8* pcd_reg;
+
+	if (!panel) {
+		pr_info("%s: panel NULL, return\n", __func__);
+		return -EINVAL;
+	}
+
+	if(panel->bl_config.bl_level <= 0) {
+		pr_info("pcd reg support when screen on, skip and return\n");
+		return 0;
+	}
+
+	if (panel->pcd_config.retry_count && panel->pcd_config.retry_count <= PCD_REG_CHECK_RETRY_MAX)
+		force_get = true;
+
+	//read pcd reg
+	if (panel->pcd_config.pcd_reg_read_flag || force_get) {
+		if (!force_get) {
+			ktime_t cur_ktime;
+			struct timespec64 cur_ts;
+			u64 last_tv_sec = panel->pcd_config.check_last_timestamp;
+			u32 check_mins = panel->pcd_config.check_interval_in_mins;
+			u32 check_secs = 60 * check_mins;
+
+			//check time interval
+			pr_debug("%s:get boottime start\n", __func__);
+			cur_ktime = ktime_get_boottime();
+			cur_ts = ktime_to_timespec64(cur_ktime);
+			if (!last_tv_sec) {
+				panel->pcd_config.check_last_timestamp = cur_ts.tv_sec;
+				pr_info("%s: keep init check_last_timestamp:%llu\n", __func__, panel->pcd_config.check_last_timestamp);
+			}
+			else {
+				u64 time_gap = cur_ts.tv_sec - last_tv_sec;
+				pr_debug("%s: last read time tv_sec:%lld, cur tv_sec:%lld", __func__, last_tv_sec, cur_ts.tv_sec);
+				if (time_gap < check_secs) {
+					panel->pcd_config.pcd_reg_read_flag = 0;
+					pr_info("%s: time gap:%lld NOT match check interval=%dmins=%ds, skip for next check session\n", __func__, time_gap, check_mins, check_secs);
+					return 0;
+				}
+				else {
+					panel->pcd_config.check_last_timestamp = cur_ts.tv_sec;
+					pr_debug("%s: time gap:%lld match check interval=%dmins=%ds, keep timestamp:%lld\n", __func__, time_gap, check_mins, check_secs, panel->pcd_config.check_last_timestamp);
+				}
+			}
+		}
+
+		if (panel->pcd_config.check_before_read) {
+			//enable pcd check before read
+			pr_info("panel pcd check need enable before read, will read in next session\n");
+			set_panelpcdcheck_enable(panel, 1);
+			if (!panel->pcd_config.pcd_reg_checkable) {
+				pr_info("%s: fail enable pcd check, pcd_reg_checkable 0", __func__);
+				return -1;
+			}
+			else {
+				//delay for read reg.
+				if (panel->pcd_config.pcd_reg_read_delay_ms) {
+					u32 delay_us = 1000*panel->pcd_config.pcd_reg_read_delay_ms;
+					usleep_range(delay_us, delay_us + 10);
+				}
+			}
+		}
+
+		if (panel->panel_trueaod_state) {
+			DSI_INFO("%s: panel in aod, skip\n", __func__);
+			return 0;
+		}
+		dsi_panel_tx_pcd_reg_cmd(panel);
+
+		//get pcd reg val
+		pcd_reg_len = (panel->pcd_config.pcd_reg_rlen > MAX_PANEL_PCD_REG_LEN) ?
+								 MAX_PANEL_PCD_REG_LEN : panel->pcd_config.pcd_reg_rlen;
+		pcd_reg = panel->pcd_config.return_buf;
+		offset = (panel->pcd_config.pcd_reg_offset >= pcd_reg_len) ?
+								 (pcd_reg_len -1) : panel->pcd_config.pcd_reg_offset;
+
+		value = pcd_reg[offset];
+		if (panel->pcd_config.pcd_reg_mask) {
+			value = value & panel->pcd_config.pcd_reg_mask;
+			pr_debug("%s: pcd[%d]:0x%02x & 0x%02x = 0x%02x", __func__, offset, pcd_reg[offset], panel->pcd_config.pcd_reg_mask, value);
+		}
+		panel->pcd_config.pcd_reg_val = value;
+
+		//parser pcd status
+		dsi_panel_parse_pcd_status(panel);
+
+		//disable pcd panel check
+		panel->pcd_config.pcd_reg_read_flag = 0;
+		if (panel->pcd_config.check_before_read && panel->pcd_config.pcd_reg_checkable)
+			set_panelpcdcheck_enable(panel, 0);
+
+		pr_info("%s: pcd reg: 0x%02x, disable read_flag:0\n", __func__, panel->pcd_config.pcd_reg_val);
+	}
+
+	return rc;
+}

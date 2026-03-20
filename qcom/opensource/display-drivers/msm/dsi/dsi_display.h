@@ -35,6 +35,7 @@
 #define DSI_MODE_MATCH_DSC_CONFIG (1 << 2)
 
 #define MAX_PANEL_CELLID      50
+#define MAX_PANEL_PCD_REG_LEN 50
 /*
  * DSI Validate Mode modifiers
  * @DSI_VALIDATE_FLAG_ALLOW_ADJUST:	Allow mode validation to also do fixup

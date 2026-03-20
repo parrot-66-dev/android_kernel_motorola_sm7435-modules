@@ -1417,8 +1417,7 @@ static void dsi_kickoff_msg_tx(struct dsi_ctrl *dsi_ctrl,
 	 * HW never ‘sees’ another vblank line and hence it gets
 	 * stuck in the ‘wait’ state.
 	 */
-	if ((flags & DSI_CTRL_CMD_CUSTOM_DMA_SCHED) ||
-		(dsi_ctrl->host_config.panel_mode == DSI_OP_VIDEO_MODE))
+	if (flags & DSI_CTRL_CMD_CUSTOM_DMA_SCHED)
 		dsi_configure_command_scheduling(dsi_ctrl, cmd_mem);
 
 	dsi_ctrl->cmd_mode = (dsi_ctrl->host_config.panel_mode ==

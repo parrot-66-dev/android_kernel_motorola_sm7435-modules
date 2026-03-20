@@ -83,4 +83,5 @@ void update_dc_cmd_nt37705(struct dsi_panel *panel,
 
 bool dsi_panel_is_gsi_mode(void);
 int mot_rm690a0_update_backlight(struct dsi_panel *panel, u32 bl_lvl);
+void dsi_panel_aod_backlight_update(struct dsi_panel *panel, enum dsi_cmd_set_type type);
 #endif /* _DSI_DISPLAY_MOT_EXT_H_ */

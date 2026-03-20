@@ -50,6 +50,11 @@
 #define HBM_BRIGHTNESS(value) ((value) == HBM_OFF_STATE ?\
 			BRIGHTNESS_HBM_OFF : BRIGHTNESS_HBM_ON)
 
+#define PCD_REG_MAX_PASS_COUNT			5
+#define PCD_REG_SEQ_INTERVAL_DEFAULT		20
+#define PCD_REG_CHECK_INTERVAL_IN_MINUTES	720		//12 hours
+#define PCD_REG_CHECK_RETRY_MAX		3
+
 /* HBM implementation is different, depending on display and backlight hardware
  * design, which is classified into the following types:
  * HBM_TYPE_OLED: OLED panel, HBM is controlled by DSI register only, which
@@ -173,6 +178,15 @@ struct dsi_backlight_config {
 	u32 brightness;
 	u32 brightness_default_level;
 	u32 bl_level;
+	u32 last_bl_level;
+	struct dsi_bl_dimming_seq *bl_off_dimming_seq;
+	u32 bl_off_count;
+	bool bl_off_enabled;
+	u32 bl_off_threshold;
+	struct dsi_bl_dimming_seq *bl_on_dimming_seq;
+	u32 bl_on_count;
+	bool bl_on_enabled;
+	u32 bl_on_threshold;
 	u32 bl_scale;
 	u32 bl_scale_sv;
 	u32 bl_dcs_subtype;
@@ -202,9 +216,16 @@ struct dsi_backlight_config {
 
 	/* backlight enable delay time */
 	u32 bl_enable_delay;
+
+	u32 aod_bl_level;
 };
 
 struct dsi_reset_seq {
+	u32 level;
+	u32 sleep_ms;
+};
+
+struct dsi_bl_dimming_seq {
 	u32 level;
 	u32 sleep_ms;
 };
@@ -256,6 +277,30 @@ struct drm_panel_cellid_config {
 	u8 *return_buf;
 };
 
+struct drm_panel_pcd_config {
+	bool pcd_reg_enabled;
+	bool pcd_reg_checkable;
+	bool pcd_reg_read_flag;
+	bool check_before_read;
+	struct dsi_panel_cmd_set pcd_reg_cmd;
+	u32 pcd_reg_rlen;
+	u32 pcd_reg_offset;
+	u32 pcd_reg_mask;
+	u8 *return_buf;
+	u8 pcd_reg_status;
+	u8 retry_count;
+	u32 pcd_reg_val;
+	u32 pcd_reg_pass_array[PCD_REG_MAX_PASS_COUNT];
+	u32 pcd_reg_pass_array_size;
+	u32 pcd_reg_pass_min;
+	u32 pcd_reg_pass_max;
+	u32 pcd_reg_read_delay_ms;
+	u32 check_seq_count;	//screen on count
+	u32 check_seq_interval;
+	u32 check_interval_in_mins;
+	u64 check_last_timestamp;
+};
+
 struct dsi_panel_spr_info {
 	bool enable;
 	enum msm_display_spr_pack_type pack_type;
@@ -276,6 +321,17 @@ struct dsi_panel_lhbm_config {
 	u32 lhbm_wait_for_fps_interval;
 	u32 *lhbm_not_allowed_fps_list;
 	u32 lhbm_not_allowed_fps_list_len;
+};
+
+struct dsi_panel_aod_config {
+	bool enable;
+	bool bl_vid_update;
+	u32 min_nit;
+	u32 hig_nit;
+	u32 min_bl_reg;
+	u32 mid_bl_reg;
+	u32 hig_bl_reg;
+	bool cmd_resend;
 };
 
 enum panel_idx {
@@ -391,6 +447,7 @@ struct dsi_panel {
 	struct dsi_panel_lhbm_config lhbm_config;
 
 	struct drm_panel_cellid_config cellid_config;
+	struct dsi_panel_aod_config aod_config;
 
 	struct dsi_parser_utils utils;
 
@@ -464,6 +521,9 @@ struct dsi_panel {
 
 	/* dsi cmd set delay when sleep in */
 	u32 dsi_cmd_set_off_delay;
+	struct drm_panel_pcd_config pcd_config;
+	bool panel_trueaod_state;
+	bool deep_standby_need_twice_reset;
 };
 
 bool dsi_display_all_displays_dead(void);
@@ -620,7 +680,10 @@ int dsi_panel_dfps_send_cmd(struct dsi_panel *panel);
 int dsi_panel_tx_cellid_cmd(struct dsi_panel *panel);
 int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 				enum dsi_cmd_set_type type);
-void set_panelpcdcheck_enable(struct dsi_panel *panel);
+int dsi_panel_tx_pcd_reg_cmd(struct dsi_panel *panel);
+void set_panelpcdcheck_enable(struct dsi_panel *panel, bool en);
+int dsi_panel_read_pcd_reg(struct dsi_panel *panel, bool force_get);
+void dsi_panel_check_pcd_read_flag(struct dsi_panel *panel);
 
 #endif /* _DSI_PANEL_H_ */
 
