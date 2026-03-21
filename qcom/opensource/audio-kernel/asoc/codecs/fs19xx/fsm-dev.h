@@ -234,6 +234,7 @@ enum dev_id_index {
 
 #define FSM_DEV_MAX   (4)
 #define FSM_ADDR_BASE (0x34)
+#undef MIN
 #define MIN(a, b)     ((a) < (b) ? (a) : (b))
 #define HIGH8(val)    ((val >> 8) & 0xFF)
 #define LOW8(val)     (val & 0xFF)
