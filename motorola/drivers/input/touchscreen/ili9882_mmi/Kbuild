@@ -92,4 +92,4 @@ ifneq ($(filter m y,$(CONFIG_GTP_DDA_STYLUS)),)
 endif
 
 KBUILD_EXTRA_SYMBOLS += $(M)/../../../mmi_info/$(GKI_OBJ_MODULE_DIR)/Module.symvers
-KBUILD_EXTRA_SYMBOLS += $(OUT_DIR)/../../vendor/qcom/opensource/display-drivers/msm/Module.symvers
+KBUILD_EXTRA_SYMBOLS += $(OUT_DIR)/../../sm7435-modules/qcom/opensource/display-drivers/msm/Module.symvers
